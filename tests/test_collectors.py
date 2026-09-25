@@ -166,4 +166,5 @@ def test_flows_fetch_chunks_and_keeps_investor_columns(fake_krx, tmp_data):
     assert len(calls) == 3
     assert list(df.columns) == flows.FLOW_COLS
     flows.save("005930", df)
-    assert flows.load("005930").shape == df.shape
+    back = flows.load("005930")
+    assert back[flows.FLOW_COLS].shape == df.shape and (back["source"] == "pykrx").all()

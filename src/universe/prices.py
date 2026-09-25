@@ -1,7 +1,9 @@
-"""종목별 일봉 수집: yfinance -> KRX 2단계 (생존편향 방지 2단계).
+"""종목별 일봉 저장소와 보조 수집 경로.
 
+국내 주 경로는 KRX Open API 일별 스냅샷(src/universe/krx_daily.py)이 이 파일 형식으로 써 준다.
+여기 있는 yfinance → pykrx 2단계(fetch_any)는 미국 종목이나 비상용이다.
 yfinance 는 상장 중인 종목만 준다. 합병·상폐 종목은 빈 응답인데,
-바로 그 종목들이 생존편향을 만든다. 그래서 KRX(pykrx adjusted=True)로 메운다.
+바로 그 종목들이 생존편향을 만든다.
 저장: prices/<code>.csv  (Date, Open, High, Low, Close, Volume, source)
 벤치마크: bench/<name>.csv (KODEX200=069500, KOSPI)
 """
@@ -106,7 +108,10 @@ def fetch_any(code: str, start: str, end: str | None = None, krx_only: bool = Fa
     errs = []
     if not krx_only:
         try:
-            df = fetch_yf(f"{code}.KS", start, end)
+            try:
+                df = fetch_yf(f"{code}.KS", start, end)
+            except ValueError:
+                df = fetch_yf(f"{code}.KQ", start, end)  # 코스닥 종목
             if (df.index.min() - pd.Timestamp(start)).days <= LATE_START_DAYS:
                 return df, "yf"
             try:

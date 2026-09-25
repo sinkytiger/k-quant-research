@@ -46,19 +46,76 @@ def parse_period(s: str, today: pd.Timestamp | None = None) -> pd.Timestamp:
     return today - pd.Timedelta(days=n)
 
 
-# 합병·상폐 종목 중 하나(메리츠화재, 2023 메리츠금융지주에 흡수). KRX 로만 과거가 나온다.
+# 합병·상폐 종목 중 하나(메리츠화재, 2023 메리츠금융지주에 흡수). 상장 중인 소스에는 없다.
 DELISTED_PROBE = ("000060", "2020-01-02", "2020-01-31")
 
 
+def check_all(log: logging.Logger) -> bool:
+    """KRX Open API(시세·시총) + KIS(수급 증분) + pykrx(구성종목·과거 수급).
+
+    KRX Open API 나 pykrx 가 막히면 생존편향이 남은 데이터가 쌓인다. 수집 전에 통과해야 한다.
+    """
+    a = krx_api_check(log)
+    b = kis_check(log)
+    c = krx_check(log)
+    log.info("종합: KRX Open API %s / KIS %s / pykrx %s", *("OK" if x else "FAIL" for x in (a, b, c)))
+    return a and b and c
+
+
+def krx_api_check(log: logging.Logger) -> bool:
+    from src import krx_api
+
+    ok = True
+    day = pd.Timestamp.today().normalize()
+    rows = []
+    try:
+        for _ in range(10):  # 최근 거래일 찾기 (휴장·미제공이면 빈 응답)
+            day -= pd.tseries.offsets.BDay(1)
+            rows = krx_api.fetch(krx_api.STOCK_KOSPI, f"{day:%Y%m%d}")
+            if rows:
+                break
+        if rows:
+            log.info("[OK] KRX Open API 유가증권 일별매매 %s: %d종목", f"{day:%Y-%m-%d}", len(rows))
+        else:
+            log.error("[FAIL] KRX Open API 최근 10영업일 모두 빈 응답")
+            ok = False
+        for api in (krx_api.INDEX_KOSPI, krx_api.ETF):
+            n = len(krx_api.fetch(api, f"{day:%Y%m%d}"))
+            log.info("[%s] KRX Open API %s: %d행", "OK" if n else "FAIL", api, n)
+            ok &= n > 0
+        old = krx_api.fetch(krx_api.STOCK_KOSPI, "20200102")
+        has = any(r.get("ISU_CD") == DELISTED_PROBE[0] for r in old)
+        log.info("[%s] 2020-01-02 스냅샷에 상폐 종목 %s 포함: %s", "OK" if has else "FAIL", DELISTED_PROBE[0], has)
+        ok &= has
+    except Exception as e:  # noqa: BLE001
+        log.error("[FAIL] KRX Open API: %s", e)
+        ok = False
+    return ok
+
+
+def kis_check(log: logging.Logger) -> bool:
+    from src import kis
+
+    try:
+        rows = kis.investor_daily("005930")
+        log.info("[OK] KIS(%s) 종목별 투자자 005930: %d일 (%s~%s)", kis.env(), len(rows),
+                 rows[-1]["stck_bsop_date"], rows[0]["stck_bsop_date"])
+        return len(rows) > 0
+    except Exception as e:  # noqa: BLE001
+        log.error("[FAIL] KIS: %s", e)
+        return False
+
+
 def krx_check(log: logging.Logger) -> bool:
-    """KRX 가 막혀 있으면 생존편향이 남은 데이터가 쌓인다. 수집 전에 반드시 통과해야 한다."""
-    from src.universe import kospi200, prices
+    """pykrx(KRX 웹 로그인): KOSPI200 과거 구성종목과 10년 수급 백필에만 쓴다."""
+    from src.universe import kospi200
 
     ok = True
     if krx.has_credentials():
         log.info("[OK] .env 에 KRX_ID/KRX_PW 있음")
     else:
-        log.warning("[WARN] KRX_ID/KRX_PW 없음. 익명 요청은 빈 응답으로 막힐 수 있다.")
+        log.warning("[FAIL] KRX_ID/KRX_PW 없음 — pykrx 는 로그인 없이는 빈 응답이다 (data.krx.co.kr 계정)")
+        return False
 
     try:
         asof = pd.Timestamp.today().normalize().replace(day=1)
@@ -72,21 +129,15 @@ def krx_check(log: logging.Logger) -> bool:
         log.error("[FAIL] 구성종목 조회 예외: %s", e)
         ok = False
 
-    try:
-        end = pd.Timestamp.today().normalize()
-        df = prices.fetch_krx("005930", (end - pd.Timedelta(days=14)).strftime("%Y-%m-%d"))
-        log.info("[OK] KRX 시세 005930 %d행 (마지막 %s)", len(df), f"{df.index.max():%Y-%m-%d}")
-    except Exception as e:  # noqa: BLE001
-        log.error("[FAIL] KRX 시세 조회 실패: %s", e)
-        ok = False
+    from src.data import flows
 
     code, a, b = DELISTED_PROBE
     try:
-        df = prices.fetch_krx(code, a, b)
-        log.info("[OK] 상폐 종목 %s 과거 시세 %d행 — 생존편향 메우기 가능", code, len(df))
+        df = flows.fetch(code, a, b)
+        log.info("[OK] pykrx 수급: 상폐 종목 %s 2020-01 %d행 — 과거 수급 백필 가능", code, len(df))
     except Exception as e:  # noqa: BLE001
-        log.error("[FAIL] 상폐 종목 %s 과거 시세 실패: %s", code, e)
+        log.error("[FAIL] pykrx 수급 조회 실패: %s", e)
         ok = False
 
-    log.info("KRX 점검 결과: %s", "통과" if ok else "실패 — 수집을 진행하지 말 것")
+    log.info("pykrx 점검 결과: %s", "통과" if ok else "실패")
     return ok

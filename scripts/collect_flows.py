@@ -1,9 +1,10 @@
 """투자자별 순매수 수급 수집 (KOSPI200 누적 편입 종목 전체, 상폐 포함).
 
-  python scripts/collect_flows.py --check
-  python scripts/collect_flows.py --backfill --years 10
+  python scripts/collect_flows.py --check                     # pykrx (KRX 로그인)
+  python scripts/collect_flows.py --backfill --years 10       # 과거: pykrx
   python scripts/collect_flows.py --backfill --years 10 --only-missing
-  python scripts/collect_flows.py --update
+  python scripts/collect_flows.py --update                    # 매일: KIS 최근 30거래일
+  python scripts/collect_flows.py --verify                    # pykrx 와 KIS 겹치는 구간 비교
   python scripts/collect_flows.py --status
 """
 from __future__ import annotations
@@ -60,25 +61,60 @@ def do_backfill(log, years: int, only_missing: bool, codes: list[str] | None) ->
     return 0 if not fails else 2
 
 
-def do_update(log, years: int) -> int:
-    m = kospi200.load_membership()
-    current = kospi200.current_members(m)
-    today = pd.Timestamp.today().normalize()
-    default_start = today - pd.DateOffset(years=years)
-    fails, n = [], 0
-    for c in kospi200.all_members(m):
-        old = flows.load(c)
-        if len(old) and c not in current and (today - old.index.max()).days > 60:
-            continue  # 상폐·합병 추정
+def update_codes(log, top_n: int = 250) -> list[str]:
+    """현재 KOSPI200 구성종목. 구성종목이 아직 없으면(pykrx 로그인 전) 최근 시총 상위 top_n 으로 임시 대체.
+
+    KIS 는 30일치만 주므로 구성종목 확보 전이라도 지금부터 쌓아야 한다.
+    """
+    cur = kospi200.current_members()
+    if len(cur):
+        return sorted(cur)
+    from src.universe import marketcap
+
+    days = marketcap.saved_days()
+    if not days:
+        return []
+    cap = marketcap.load(max(days))["market_cap"].sort_values(ascending=False)
+    log.warning("KOSPI200 구성종목 없음 → %s 시총 상위 %d종목으로 임시 수집", f"{max(days):%Y-%m-%d}", top_n)
+    return list(cap.index[:top_n])
+
+
+def do_update(log, codes: list[str] | None) -> int:
+    """KIS 최근 30거래일로 증분. 기존(pykrx) 행이 있는 날은 건드리지 않는다."""
+    codes = codes or update_codes(log)
+    if len(codes) == 0:
+        log.error("대상 종목이 없다. collect_universe.py --backfill 또는 --membership 먼저.")
+        return 1
+    fails, added = [], 0
+    for i, c in enumerate(codes, 1):
         try:
-            new = flows.fetch(c, flows.update_start(c, default_start))
-            flows.save(c, new)
-            n += 1
+            before = len(flows.load(c))
+            df = flows.save(c, flows.fetch_kis(c), source="kis", keep_existing=True)
+            added += len(df) - before
         except Exception as e:  # noqa: BLE001
             fails.append((c, str(e)))
             log.warning("%s: %s", c, e)
-    log.info("수급 증분 %d종목, 실패 %d", n, len(fails))
+        if i % 50 == 0 or i == len(codes):
+            log.info("[%d/%d] KIS 수급 증분, 새 행 %d", i, len(codes), added)
+    log.info("수급 증분(KIS) %d종목, 새 행 %d, 실패 %d", len(codes) - len(fails), added, len(fails))
     return 0 if not fails else 2
+
+
+def do_verify(log, codes: list[str] | None, n: int = 10) -> int:
+    """pykrx 로 받은 과거와 KIS 30일이 겹치는 구간에서 값이 같은지."""
+    codes = codes or [c for c in update_codes(log) if "pykrx" in set(flows.load(c).get("source", []))][:n]
+    if not codes:
+        log.warning("pykrx 수급이 있는 종목이 없어 비교할 수 없다 (--backfill 먼저)")
+        return 1
+    for c in codes:
+        try:
+            old = flows.load(c)
+            old = old[old["source"] == "pykrx"]
+            rep = flows.compare_sources(old, flows.fetch_kis(c))
+            log.info("%s\n%s", c, rep.to_string(index=False))
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s: %s", c, e)
+    return 0
 
 
 def do_status(log) -> int:
@@ -110,6 +146,7 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--backfill", action="store_true")
     ap.add_argument("--update", action="store_true")
+    ap.add_argument("--verify", action="store_true")
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--years", type=int, default=10)
     ap.add_argument("--only-missing", action="store_true")
@@ -123,10 +160,12 @@ def main(argv=None) -> int:
     if a.backfill:
         rc |= do_backfill(log, a.years, a.only_missing, a.codes)
     if a.update:
-        rc |= do_update(log, a.years)
+        rc |= do_update(log, a.codes)
+    if a.verify:
+        rc |= do_verify(log, a.codes)
     if a.status:
         rc |= do_status(log)
-    if not any([a.check, a.backfill, a.update, a.status]):
+    if not any([a.check, a.backfill, a.update, a.verify, a.status]):
         ap.print_help()
     return rc
 
