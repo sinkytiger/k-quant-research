@@ -14,6 +14,15 @@ def test_empty_dataframe_instead_of_list_does_not_crash(fake_krx):
     assert kospi200.fetch_members(pd.Timestamp("2020-01-01")) == []
 
 
+def test_failed_login_never_imports_pykrx(monkeypatch):
+    """비밀번호가 틀리면 pykrx 를 import 하지 않는다 (import·호출마다 재로그인 → 계정 잠김)."""
+    monkeypatch.setattr(krx, "_backend", None)
+    monkeypatch.setattr(krx, "_login_checked", ("CD007", "패스워드 오류수에 의한 잠금"))
+    with pytest.raises(krx.KrxLoginError, match="CD007"):
+        krx.stock()
+    assert krx._backend is None
+
+
 def test_is_empty_handles_dataframe_list_none():
     assert krx.is_empty(None) and krx.is_empty([]) and krx.is_empty(pd.DataFrame())
     assert not krx.is_empty(["005930"])

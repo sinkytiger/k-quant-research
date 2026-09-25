@@ -17,8 +17,9 @@ def setup(name: str) -> logging.Logger:
         except Exception:  # noqa: BLE001
             pass
     config.ensure_dirs()
+    # 루트는 WARNING: pykrx 가 루트에 logging.info(args, kwargs) 를 잘못 찍어 트레이스백을 쏟아낸다
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
@@ -28,6 +29,7 @@ def setup(name: str) -> logging.Logger:
         force=True,
     )
     log = logging.getLogger(name)
+    log.setLevel(logging.INFO)
     log.info("DATA=%s", config.DATA)
     return log
 
@@ -116,6 +118,11 @@ def krx_check(log: logging.Logger) -> bool:
     else:
         log.warning("[FAIL] KRX_ID/KRX_PW 없음 — pykrx 는 로그인 없이는 빈 응답이다 (data.krx.co.kr 계정)")
         return False
+    code, msg = krx.login_probe()
+    if code not in krx.LOGIN_OK:
+        log.error("[FAIL] KRX 로그인 %s: %s — 더 시도하지 않는다. data.krx.co.kr 에서 확인 후 .env 수정", code, msg)
+        return False
+    log.info("[OK] KRX 로그인 확인 (%s)", code)
 
     try:
         asof = pd.Timestamp.today().normalize().replace(day=1)
