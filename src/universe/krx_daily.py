@@ -74,16 +74,32 @@ def candidate_days(start, end) -> list[pd.Timestamp]:
     return [d for d in pd.bdate_range(start, end) if d not in hol]
 
 
+CLOSE_FIELD = {"stk": "TDD_CLSPRC", "ksq": "TDD_CLSPRC", "etf": "TDD_CLSPRC", "idx_kospi": "CLSPRC_IDX"}
+CALENDAR_DS = "stk"  # 휴장일 판정은 유가증권 일별매매로만 한다
+
+
+def has_prices(ds: str, rows: list[dict]) -> bool:
+    """ETF API 는 휴장일에 빈 배열 대신 가격 칸이 빈 행을 준다. 종가가 하나라도 있어야 거래일."""
+    f = CLOSE_FIELD[ds]
+    return any(str(r.get(f, "")).replace(",", "").strip() not in ("", "-", "0") for r in rows)
+
+
 def collect_day(ds: str, day) -> str:
-    """'saved' | 'holiday' | 'exists'. 한도 초과는 QuotaExceeded 로 올라간다."""
+    """'saved' | 'holiday' | 'missing' | 'exists'. 한도 초과는 QuotaExceeded 로 올라간다.
+
+    휴장일 기록은 CALENDAR_DS 가 비었을 때만 한다. 다른 데이터셋이 비면 'missing' 으로 두고
+    다음 실행에서 다시 받는다(자정 무렵 일시적 빈 응답을 휴장으로 굳히지 않기 위해).
+    """
     day = pd.Timestamp(day)
     p = snap_path(ds, day)
     if p.exists():
         return "exists"
     rows = krx_api.fetch(DATASETS[ds], f"{day:%Y%m%d}")
-    if len(rows) == 0:
+    if not has_prices(ds, rows):
+        if ds != CALENDAR_DS:
+            return "missing"
         # 오늘·어제는 아직 안 나온 것일 수 있으니 휴장으로 적지 않는다
-        if (pd.Timestamp.today().normalize() - day).days > 2:
+        if (pd.Timestamp.today().normalize() - day).days > 2 and day not in load_holidays():
             add_holiday(day)
         return "holiday"
     df = pd.DataFrame(rows)
@@ -212,7 +228,8 @@ def build_bench() -> dict[str, int]:
         if sel.empty:
             continue
         if ds == "etf":
-            adj = adjust(tidy_stock(sel))[prices.COLS]
+            t = tidy_stock(sel)
+            adj = adjust(t[t["Close"] > 0])[prices.COLS]
         else:
             df = pd.DataFrame({"Date": pd.to_datetime(sel["BAS_DD"], format="%Y%m%d")})
             for s, d in {"OPNPRC_IDX": "Open", "HGPRC_IDX": "High", "LWPRC_IDX": "Low",

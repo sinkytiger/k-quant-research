@@ -86,6 +86,24 @@ def test_holiday_empty_block_recorded_and_skipped(krx_env, monkeypatch):
     assert calls == ["20200101", "20200102"]
 
 
+def test_etf_blank_rows_on_holiday_are_not_saved(krx_env, monkeypatch):
+    """ETF API 는 휴장일에 가격 칸이 빈 행을 준다. 거래일이 아니다."""
+    blank = {"BAS_DD": "20150928", "ISU_CD": "069500", "TDD_CLSPRC": "", "CMPPREVDD_PRC": ""}
+    monkeypatch.setattr(krx_api, "_get", lambda *a: {"OutBlock_1": [blank]})
+    assert krx_daily.collect_day("etf", "2015-09-28") == "missing"
+    assert krx_daily.saved_days("etf") == []
+    assert krx_daily.load_holidays() == set()  # 휴장 판정은 stk 로만
+
+
+def test_only_calendar_dataset_records_holidays(krx_env, monkeypatch):
+    monkeypatch.setattr(krx_api, "_get", lambda *a: {"OutBlock_1": []})
+    assert krx_daily.collect_day("idx_kospi", "2020-01-02") == "missing"  # 일시적 빈 응답일 수 있다
+    assert krx_daily.load_holidays() == set()
+    assert krx_daily.collect_day("stk", "2020-01-01") == "holiday"
+    assert krx_daily.collect_day("stk", "2020-01-01") == "holiday"
+    assert krx_daily.holidays_path().read_text(encoding="utf-8").split() == ["20200101"]  # 중복 기록 없음
+
+
 def test_401_means_service_not_subscribed(krx_env, monkeypatch):
     monkeypatch.setattr(krx_api, "_get", lambda *a: {"respCode": "401", "respMsg": "Unauthorized"})
     with pytest.raises(krx_api.KrxApiError, match="이용신청"):

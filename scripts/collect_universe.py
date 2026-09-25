@@ -36,13 +36,18 @@ def do_membership(log, start: str, end: str | None) -> int:
 
 def collect_snapshots(log, datasets: list[str], start, end) -> int:
     """평일마다 datasets 스냅샷. 이미 있는 날·휴장일은 건너뛴다. 한도에 걸리면 멈추고 2 반환."""
-    days = krx_daily.candidate_days(start, end)
+    # 휴장일 달력(stk)을 먼저 채워야 다른 데이터셋이 휴장일을 호출하지 않는다
+    datasets = sorted(datasets, key=lambda d: d != krx_daily.CALENDAR_DS)
     for ds in datasets:
+        days = krx_daily.candidate_days(start, end)
+        if ds != krx_daily.CALENDAR_DS:  # 거래일로 확인된 날만
+            cal = set(krx_daily.saved_days(krx_daily.CALENDAR_DS))
+            days = [d for d in days if d in cal] if cal else days
         have = set(krx_daily.saved_days(ds))
         todo = [d for d in days if d not in have]
         log.info("[%s] 대상 %d일, 있음 %d, 받을 것 %d (오늘 사용 %d건)",
                  ds, len(days), len(days) - len(todo), len(todo), krx_api.used_today())
-        stats = {"saved": 0, "holiday": 0, "exists": 0}
+        stats = {"saved": 0, "holiday": 0, "missing": 0, "exists": 0}
         for i, d in enumerate(todo, 1):
             try:
                 stats[krx_daily.collect_day(ds, d)] += 1
