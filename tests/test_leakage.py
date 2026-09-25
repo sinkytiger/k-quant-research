@@ -7,7 +7,7 @@ from src.data.flows import normalized_flow
 from src.features.ic import daily_returns, feature_ic, forward_returns
 from src.features.transforms import matured_events, winsorize_expanding
 from src.panel import attach_labels
-from src.universe import kospi200, liquidity
+from src.universe import liquidity, membership
 
 
 def _days(n, start="2024-01-01"):
@@ -135,9 +135,9 @@ def test_feature_ic_ignores_all_nan_holiday_rows():
 # ---------- 시점별 편입 → 라벨 ----------
 def test_members_asof_never_sees_future_snapshot():
     m = {pd.Timestamp("2024-01-01"): frozenset({"A"}), pd.Timestamp("2024-02-01"): frozenset({"A", "B"})}
-    assert kospi200.members_asof("2024-01-31", m) == frozenset({"A"})
-    assert kospi200.members_asof("2024-02-01", m) == frozenset({"A", "B"})
-    assert kospi200.members_asof("2023-12-31", m) == frozenset()
+    assert membership.members_asof("2024-01-31", m) == frozenset({"A"})
+    assert membership.members_asof("2024-02-01", m) == frozenset({"A", "B"})
+    assert membership.members_asof("2023-12-31", m) == frozenset()
 
 
 def test_membership_mask_matches_members_asof():
@@ -145,7 +145,7 @@ def test_membership_mask_matches_members_asof():
     idx = pd.bdate_range("2023-12-28", "2024-02-06")
     mask = liquidity.membership_mask(idx, ["A", "B", "C"], m)
     for d in idx:
-        assert set(mask.columns[mask.loc[d]]) == set(kospi200.members_asof(d, m))
+        assert set(mask.columns[mask.loc[d]]) == set(membership.members_asof(d, m))
 
 
 def test_labels_ranked_within_pointintime_universe():

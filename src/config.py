@@ -12,11 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_env(path: Path | None = None) -> None:
-    """.env 를 os.environ 에 올린다. 이미 있는 값은 덮지 않는다.
-
-    pykrx 는 import 시점에 KRX_ID/KRX_PW 로 로그인 세션을 만든다.
-    그래서 이 함수는 반드시 pykrx import 보다 먼저 불려야 한다(src/krx.py 가 보장).
-    """
+    """.env 를 os.environ 에 올린다. 이미 있는 값은 덮지 않는다(KRX_API_KEY, KIS_APP_KEY 등)."""
     p = path or ROOT / ".env"
     if not p.exists():
         return
@@ -43,11 +39,9 @@ MEMBERSHIP_DIR = UNIVERSE_DIR / "membership"
 PRICES_DIR = UNIVERSE_DIR / "prices"
 MARKETCAP_DIR = UNIVERSE_DIR / "market_cap"
 BENCH_DIR = UNIVERSE_DIR / "bench"
-NAMES_CSV = UNIVERSE_DIR / "kospi200_names.csv"
+NAMES_CSV = UNIVERSE_DIR / "names.csv"
 FLOWS_DIR = DATA / "flows"
 RAW_DIR = DATA / "raw"
-
-KOSPI200_INDEX = "1028"
 
 
 def ensure_dirs() -> None:

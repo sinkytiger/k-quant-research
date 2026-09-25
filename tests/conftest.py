@@ -6,7 +6,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src import config, krx  # noqa: E402
+from src import config  # noqa: E402
 
 
 @pytest.fixture
@@ -19,18 +19,6 @@ def tmp_data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PRICES_DIR", uni / "prices")
     monkeypatch.setattr(config, "MARKETCAP_DIR", uni / "market_cap")
     monkeypatch.setattr(config, "BENCH_DIR", uni / "bench")
-    monkeypatch.setattr(config, "NAMES_CSV", uni / "kospi200_names.csv")
+    monkeypatch.setattr(config, "NAMES_CSV", uni / "names.csv")
     monkeypatch.setattr(config, "FLOWS_DIR", tmp_path / "flows")
     return tmp_path
-
-
-@pytest.fixture
-def fake_krx(monkeypatch):
-    """pykrx 대신 쓸 가짜 백엔드. 테스트가 메서드를 붙여 쓴다."""
-
-    class Fake:
-        __name__ = "fake"
-
-    fake = Fake()
-    monkeypatch.setattr(krx, "_backend", fake)
-    return fake

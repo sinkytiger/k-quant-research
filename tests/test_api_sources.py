@@ -138,23 +138,14 @@ def test_kis_token_is_cached(kis_env, monkeypatch):
     assert len(issued) == 2
 
 
-def test_kis_flows_units_and_existing_rows_kept(kis_env, monkeypatch):
-    monkeypatch.setattr(kis, "token", lambda now=None: "t")
-    rows = [{"stck_bsop_date": "20260923", "prsn_ntby_tr_pbmn": "-2167606", "frgn_ntby_tr_pbmn": "1283306",
-             "orgn_ntby_tr_pbmn": "382751"},
-            {"stck_bsop_date": "20260922", "prsn_ntby_tr_pbmn": "10", "frgn_ntby_tr_pbmn": "-5",
-             "orgn_ntby_tr_pbmn": "-5"}]
-    monkeypatch.setattr(kis, "_get", lambda url, h, p: ({"rt_cd": "0", "output": rows}, {}))
-    df = flows.fetch_kis("005930")
-    assert df.loc["2026-09-23", "개인"] == -2_167_606 * 1_000_000  # 백만원 → 원
-    assert pd.isna(df.loc["2026-09-23", "기타법인"])
-
-    old = pd.DataFrame({"기관합계": [1.0], "기타법인": [2.0], "개인": [3.0], "외국인합계": [4.0]},
-                       index=pd.DatetimeIndex(["2026-09-22"], name="Date"))
-    flows.save("005930", old, source="pykrx")
-    merged = flows.save("005930", df, source="kis", keep_existing=True)
-    assert merged.loc["2026-09-22", "source"] == "pykrx" and merged.loc["2026-09-22", "개인"] == 3.0
-    assert merged.loc["2026-09-23", "source"] == "kis"
+def test_kis_flow_fields_and_units():
+    """KIS 실제 응답(2026-09-23 삼성전자) 필드. 외국인합계 = 등록+비등록, 금액은 백만원."""
+    row = {"stck_bsop_date": "20260923", "orgn_ntby_tr_pbmn": "382751", "etc_corp_ntby_tr_pbmn": "500000",
+           "prsn_ntby_tr_pbmn": "-2167606", "frgn_ntby_tr_pbmn": "1283306"}
+    df = flows.parse_kis([row, {"stck_bsop_date": ""}])  # 빈 날짜 행은 버린다
+    assert len(df) == 1
+    assert df.loc["2026-09-23", "개인"] == -2_167_606 * 1_000_000
+    assert df.loc["2026-09-23", "외국인합계"] == 1_283_306 * 1_000_000
 
 
 def test_kis_error_raises(kis_env, monkeypatch):

@@ -1,11 +1,10 @@
-"""종목별 일봉 저장소와 보조 수집 경로.
+"""종목별 일봉 저장소 + yfinance 보조 경로.
 
 국내 주 경로는 KRX Open API 일별 스냅샷(src/universe/krx_daily.py)이 이 파일 형식으로 써 준다.
-여기 있는 yfinance → pykrx 2단계(fetch_any)는 미국 종목이나 비상용이다.
-yfinance 는 상장 중인 종목만 준다. 합병·상폐 종목은 빈 응답인데,
-바로 그 종목들이 생존편향을 만든다.
+yfinance 경로(fetch_yf / backfill / update)는 미국 종목용이다. yfinance 는 상장 중인 종목만 주므로
+국내 백테스트에 쓰면 합병·상폐 종목이 빠져 생존편향이 생긴다.
 저장: prices/<code>.csv  (Date, Open, High, Low, Close, Volume, source)
-벤치마크: bench/<name>.csv (KODEX200=069500, KOSPI)
+벤치마크: bench/<name>.csv
 """
 from __future__ import annotations
 
@@ -13,21 +12,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from src import config, krx
+from src import config
 
 COLS = ["Open", "High", "Low", "Close", "Volume"]
 KR_MAP = {"시가": "Open", "고가": "High", "저가": "Low", "종가": "Close", "거래량": "Volume"}
 
-# yfinance 시작일이 요청보다 이만큼 늦으면 KRX 로 앞부분이 있는지 확인한다.
-LATE_START_DAYS = 30
-# 증분 갱신 시 겹치는 구간 종가가 이 비율 이상 다르면 수정주가가 바뀐 것(분할·배당 등) → 전체 재수집.
+# 증분 갱신 시 겹치는 구간 종가가 이 비율 이상 다르면 수정주가가 바뀐 것(분할 등) → 전체 재수집.
 ADJ_TOL = 0.005
-
-BENCH = {
-    # name: (yfinance 티커, KRX 종류, KRX 코드)
-    "069500": ("069500.KS", "etf", "069500"),
-    "KOSPI": ("^KS11", "index", "1001"),
-}
 
 
 def price_path(code: str) -> Path:
@@ -39,8 +30,8 @@ def bench_path(name: str) -> Path:
 
 
 def clean(df: pd.DataFrame | None) -> pd.DataFrame:
-    """한글 컬럼 매핑 + 0 종가(거래정지·상폐 직전) 제거 + 날짜 중복 제거 + 정렬."""
-    if krx.is_empty(df):
+    """컬럼 정리 + 0 종가 제거 + 날짜 중복 제거 + 정렬."""
+    if df is None or len(df) == 0:
         return pd.DataFrame(columns=COLS)
     df = df.copy()
     if isinstance(df.columns, pd.MultiIndex):  # yfinance 단일 티커도 (필드, 티커) 멀티인덱스
@@ -59,10 +50,6 @@ def clean(df: pd.DataFrame | None) -> pd.DataFrame:
     return df[~df.index.duplicated(keep="last")].sort_index()
 
 
-def _fmt(d) -> str:
-    return pd.Timestamp(d).strftime("%Y%m%d")
-
-
 def _today() -> pd.Timestamp:
     return pd.Timestamp.today().normalize()
 
@@ -79,55 +66,6 @@ def fetch_yf(ticker: str, start: str, end: str | None = None) -> pd.DataFrame:
     if out.empty:
         raise ValueError(f"yfinance 빈 응답: {ticker}")
     return out
-
-
-def fetch_krx(code: str, start: str, end: str | None = None, kind: str = "stock") -> pd.DataFrame:
-    s = krx.stock()
-    a, b = _fmt(start), _fmt(end or _today())
-    krx.throttle()
-    if kind == "stock":
-        df = s.get_market_ohlcv_by_date(a, b, code, adjusted=True)
-    elif kind == "etf":
-        df = s.get_etf_ohlcv_by_date(a, b, code)
-    elif kind == "index":
-        df = s.get_index_ohlcv_by_date(a, b, code)
-    else:
-        raise ValueError(kind)
-    out = clean(df)
-    if out.empty:
-        raise ValueError(f"KRX 빈 응답: {code}")
-    return out
-
-
-def fetch_any(code: str, start: str, end: str | None = None, krx_only: bool = False):
-    """(df, source). 둘 다 실패하면 ValueError.
-
-    yfinance 가 요청 시작일보다 한참 늦게 시작하면(yf 쪽 이력 누락 또는 신규상장)
-    KRX 로 한 번 더 받아 더 긴 쪽을 쓴다.
-    """
-    errs = []
-    if not krx_only:
-        try:
-            try:
-                df = fetch_yf(f"{code}.KS", start, end)
-            except ValueError:
-                df = fetch_yf(f"{code}.KQ", start, end)  # 코스닥 종목
-            if (df.index.min() - pd.Timestamp(start)).days <= LATE_START_DAYS:
-                return df, "yf"
-            try:
-                k = fetch_krx(code, start, end)
-                if k.index.min() < df.index.min() - pd.Timedelta(days=LATE_START_DAYS):
-                    return k, "krx"
-            except Exception:  # noqa: BLE001
-                pass
-            return df, "yf"
-        except Exception as e:  # noqa: BLE001
-            errs.append(f"yf: {e}")
-    try:
-        return fetch_krx(code, start, end), "krx"
-    except Exception as e:  # noqa: BLE001
-        errs.append(f"krx: {e}")
-    raise ValueError(f"{code} 실패 — " + " | ".join(errs))
 
 
 def _load_path(p: Path) -> pd.DataFrame:
@@ -176,44 +114,21 @@ def adjustment_changed(old: pd.DataFrame, new: pd.DataFrame, tol: float = ADJ_TO
     return bool(rel.max() > tol)
 
 
-def backfill(code: str, start: str, krx_only: bool = False) -> tuple[pd.DataFrame, str]:
-    df, src = fetch_any(code, start, krx_only=krx_only)
-    return save(code, df, src, overwrite=True), src
+def backfill_yf(ticker: str, start: str, code: str | None = None) -> pd.DataFrame:
+    return save(code or ticker, fetch_yf(ticker, start), "yf", overwrite=True)
 
 
-def update(code: str, default_start: str) -> tuple[pd.DataFrame, str]:
-    """증분 갱신. 겹치는 구간 종가가 달라졌으면 처음부터 다시 받아 덮어쓴다."""
+def update_yf(ticker: str, default_start: str, code: str | None = None) -> pd.DataFrame:
+    """yfinance 증분. 겹치는 구간 종가가 달라졌으면 처음부터 다시 받아 덮어쓴다."""
+    code = code or ticker
     old = load(code)
     if old.empty:
-        return backfill(code, default_start)
-    last_src = str(old["source"].iloc[-1]) if "source" in old.columns else "yf"
-    start = auto_period_start(old.index.max())
-    new, src = fetch_any(code, start, krx_only=(last_src == "krx"))
-    if adjustment_changed(old, new) or src != last_src:
+        return backfill_yf(ticker, default_start, code)
+    new = fetch_yf(ticker, auto_period_start(old.index.max()))
+    if adjustment_changed(old, new):
         full_start = min(old.index.min(), pd.Timestamp(default_start)).strftime("%Y-%m-%d")
-        return backfill(code, full_start, krx_only=(src == "krx"))
-    return save(code, new, src), src
-
-
-def fetch_bench(name: str, start: str, end: str | None = None) -> tuple[pd.DataFrame, str]:
-    yf_t, kind, kcode = BENCH[name]
-    errs = []
-    try:
-        df = fetch_yf(yf_t, start, end)
-        if (df.index.min() - pd.Timestamp(start)).days <= LATE_START_DAYS:
-            return df, "yf"
-        errs.append(f"yf: 시작일 {df.index.min():%Y-%m-%d} 로 늦음")
-    except Exception as e:  # noqa: BLE001
-        errs.append(f"yf: {e}")
-    try:
-        return fetch_krx(kcode, start, end, kind=kind), "krx"
-    except Exception as e:  # noqa: BLE001
-        errs.append(f"krx: {e}")
-    raise ValueError(f"벤치 {name} 실패 — " + " | ".join(errs))
-
-
-def save_bench(name: str, df: pd.DataFrame, source: str) -> pd.DataFrame:
-    return _save_path(bench_path(name), df, source, overwrite=True)
+        return backfill_yf(ticker, full_start, code)
+    return save(code, new, "yf")
 
 
 def delisted_guess(codes: list[str], today: pd.Timestamp | None = None, gap_days: int = 20):

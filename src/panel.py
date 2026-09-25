@@ -8,11 +8,12 @@ from __future__ import annotations
 import pandas as pd
 
 from src.features.ic import forward_returns
-from src.universe import kospi200, liquidity, prices
+from src.universe import liquidity, prices
+from src.universe import membership as members
 
 
 def load_panel(codes: list[str] | None = None) -> dict[str, pd.DataFrame]:
-    codes = codes if codes is not None else kospi200.all_members()
+    codes = codes if codes is not None else members.all_members()
     close = prices.panel(codes, "Close")
     volume = prices.panel(codes, "Volume").reindex_like(close)
     return {"close": close, "volume": volume}
@@ -20,7 +21,7 @@ def load_panel(codes: list[str] | None = None) -> dict[str, pd.DataFrame]:
 
 def universe_mask(close: pd.DataFrame, volume: pd.DataFrame, membership: dict | None = None,
                   drop_frac: float = 0.2, min_names: int = 30) -> pd.DataFrame:
-    m = kospi200.load_membership() if membership is None else membership
+    m = members.load_membership() if membership is None else membership
     mm = liquidity.membership_mask(close.index, close.columns, m) if m else None
     dv = liquidity.dollar_volume(close, volume)
     return liquidity.restrict_universe(dv, mm, drop_frac=drop_frac, min_names=min_names)

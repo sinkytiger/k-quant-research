@@ -1,8 +1,8 @@
 """투자자별 순매수 수급 (가격과 직교한 첫 번째 축).
 
-- 과거(10년 백필): pykrx get_market_trading_value_by_date(on="순매수"), 원 단위. KRX 로그인 필요.
-- 매일 증분: KIS inquire-investor (최근 30거래일만 준다, 백만원 단위 → 원으로 변환).
-  KIS 에는 기타법인이 없어 NaN. 겹치는 날은 pykrx 값을 남긴다(더 완전하므로).
+- 출처: KIS 종목별 투자자매매동향(일별) FHPTJ04160001. 기준일을 주면 그날까지 30거래일을 준다.
+  기준일을 30일씩 거꾸로 옮기며 10년 백필, 매일은 오늘 기준 한 번. 상폐 종목도 나온다.
+- 금액 단위: 백만원 → 원으로 저장.
 - 저장: flows/<code>.csv (Date, 기관합계, 기타법인, 개인, 외국인합계, source)
 - 피처: 순매수 ÷ 최근 20일 거래대금 중앙값(shift 1), 공표 시차 lag=1.
   원화 그대로 쓰면 삼성전자가 늘 1등이다.
@@ -14,76 +14,81 @@ from pathlib import Path
 
 import pandas as pd
 
-from src import config, krx
+from src import config
 
 FLOW_COLS = ["기관합계", "기타법인", "개인", "외국인합계"]
 LAG = 1
 NORM_WINDOW = 20
+
+KIS_TR = "FHPTJ04160001"
+KIS_PATH = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
+KIS_MAP = {"orgn_ntby_tr_pbmn": "기관합계", "etc_corp_ntby_tr_pbmn": "기타법인",
+           "prsn_ntby_tr_pbmn": "개인", "frgn_ntby_tr_pbmn": "외국인합계"}
+KIS_UNIT = 1_000_000  # 백만원 → 원
 
 
 def flow_path(code: str) -> Path:
     return config.FLOWS_DIR / f"{code}.csv"
 
 
-def _year_chunks(start: pd.Timestamp, end: pd.Timestamp) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
-    out = []
-    a = start
-    while a <= end:
-        b = min(a + pd.DateOffset(years=1) - pd.Timedelta(days=1), end)
-        out.append((a, b))
-        a = b + pd.Timedelta(days=1)
-    return out
-
-
-def clean(df: pd.DataFrame | None) -> pd.DataFrame:
-    if krx.is_empty(df):
-        return pd.DataFrame(columns=FLOW_COLS)
-    cols = [c for c in FLOW_COLS if c in df.columns]
-    out = df[cols].apply(pd.to_numeric, errors="coerce")
-    out.index = pd.to_datetime(out.index).normalize()
-    out.index.name = "Date"
-    return out[~out.index.duplicated(keep="last")].sort_index()
-
-
-def fetch(code: str, start, end=None) -> pd.DataFrame:
-    """1년 단위로 끊어 받는다. 전 구간이 비면 ValueError."""
-    s = krx.stock()
-    end_ts = pd.Timestamp(end) if end is not None else pd.Timestamp.today().normalize()
-    parts = []
-    for a, b in _year_chunks(pd.Timestamp(start), end_ts):
-        krx.throttle()
-        raw = s.get_market_trading_value_by_date(
-            a.strftime("%Y%m%d"), b.strftime("%Y%m%d"), code, on="순매수"
-        )
-        c = clean(raw)
-        if len(c):
-            parts.append(c)
-    if len(parts) == 0:
-        raise ValueError(f"수급 빈 응답: {code}")
-    out = pd.concat(parts)
-    return out[~out.index.duplicated(keep="last")].sort_index()
-
-
-KIS_MAP = {"prsn_ntby_tr_pbmn": "개인", "frgn_ntby_tr_pbmn": "외국인합계", "orgn_ntby_tr_pbmn": "기관합계"}
-KIS_UNIT = 1_000_000  # 백만원 → 원
-
-
-def fetch_kis(code: str) -> pd.DataFrame:
-    """KIS 최근 30거래일. 컬럼은 pykrx 와 같게 맞춘다."""
-    from src import kis
-
-    rows = kis.investor_daily(code)
+def parse_kis(rows: list[dict]) -> pd.DataFrame:
+    rows = [r for r in rows if r.get("stck_bsop_date")]
     if len(rows) == 0:
-        raise ValueError(f"KIS 수급 빈 응답: {code}")
+        return pd.DataFrame(columns=FLOW_COLS)
     df = pd.DataFrame(rows)
     out = pd.DataFrame(index=pd.to_datetime(df["stck_bsop_date"], format="%Y%m%d"))
     for src, dst in KIS_MAP.items():
         out[dst] = pd.to_numeric(df[src].astype(str).str.replace(",", ""), errors="coerce").values * KIS_UNIT
-    # 장중·당일 행은 확정 전 값이 섞일 수 있다: 거래대금이 모두 0 인 행은 뺀다
-    out = out[(out[list(KIS_MAP.values())].abs().sum(axis=1) > 0)]
-    out["기타법인"] = float("nan")
     out.index.name = "Date"
-    return out[FLOW_COLS].sort_index()
+    out = out[~out.index.duplicated(keep="first")].sort_index()
+    return out[FLOW_COLS]
+
+
+CUTOFF = "15:40"  # KIS: 당일 날짜 조회는 00:00~15:40 에 막힌다 (OPSQ2001 TIME LIMIT)
+
+
+def last_complete_day(now: pd.Timestamp | None = None) -> pd.Timestamp:
+    """조회해도 되는 마지막 날짜. 15:40 전이면 어제."""
+    now = now or pd.Timestamp.now()
+    today = now.normalize()
+    return today if now.strftime("%H:%M") >= CUTOFF else today - pd.Timedelta(days=1)
+
+
+def fetch_page(code: str, end) -> pd.DataFrame:
+    """end 까지 30거래일. end 는 last_complete_day() 를 넘지 않게 자른다."""
+    from src import kis
+
+    end = min(pd.Timestamp(end), last_complete_day())
+    body, _ = kis.call(KIS_TR, KIS_PATH, {
+        "FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+        "FID_INPUT_DATE_1": pd.Timestamp(end).strftime("%Y%m%d"),
+        "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": "",
+    })
+    return parse_kis(list(body.get("output2") or []))
+
+
+def fetch(code: str, start, end=None, max_pages: int = 200) -> pd.DataFrame:
+    """start~end 수급. 30거래일씩 거꾸로 받는다. 전 구간이 비면 ValueError."""
+    start = pd.Timestamp(start)
+    cur = min(pd.Timestamp(end), last_complete_day()) if end is not None else last_complete_day()
+    parts = []
+    for _ in range(max_pages):
+        page = fetch_page(code, cur)
+        if page.empty:
+            break
+        parts.append(page)
+        first = page.index.min()
+        if first <= start or first >= cur + pd.Timedelta(days=1):
+            break
+        cur = first - pd.Timedelta(days=1)
+    if not parts:
+        raise ValueError(f"수급 빈 응답: {code}")
+    out = pd.concat(parts)
+    out = out[~out.index.duplicated(keep="first")].sort_index()
+    out = out[out.index >= start]
+    if out.empty:
+        raise ValueError(f"수급 빈 응답: {code} ({start:%Y-%m-%d} 이후 없음)")
+    return out
 
 
 def load(code: str) -> pd.DataFrame:
@@ -93,39 +98,24 @@ def load(code: str) -> pd.DataFrame:
     return pd.read_csv(p, index_col="Date", parse_dates=True, encoding="utf-8-sig")
 
 
-def save(code: str, new: pd.DataFrame, overwrite: bool = False, source: str = "pykrx",
-         keep_existing: bool = False) -> pd.DataFrame:
-    """keep_existing=True 면 겹치는 날은 기존 행을 남기고 새 날짜만 붙인다(KIS 증분용)."""
+def save(code: str, new: pd.DataFrame, overwrite: bool = False, source: str = "kis") -> pd.DataFrame:
+    """겹치는 날은 새 값으로 바꾼다(KIS 가 사후 수정한 값 반영)."""
     new = new.copy()
     new["source"] = source
     old = pd.DataFrame() if overwrite else load(code)
     df = pd.concat([old, new]) if len(old) else new
-    df = df[~df.index.duplicated(keep="first" if keep_existing else "last")].sort_index()
+    df = df[~df.index.duplicated(keep="last")].sort_index()
     flow_path(code).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(flow_path(code), index_label="Date", encoding="utf-8-sig")
     return df
 
 
 def update_start(code: str, default_start) -> pd.Timestamp:
-    """증분: 캐시 마지막일 -5일부터 다시 받는다(KRX 수정 반영)."""
+    """증분: 캐시 마지막일 -5일부터 다시 받는다."""
     old = load(code)
     if old.empty:
         return pd.Timestamp(default_start)
     return old.index.max() - pd.Timedelta(days=5)
-
-
-def compare_sources(old: pd.DataFrame, kis_df: pd.DataFrame) -> pd.DataFrame:
-    """겹치는 날 pykrx 대 KIS 차이(원). KIS 가 백만원 반올림이라 ±1백만원은 같은 값."""
-    ov = old.index.intersection(kis_df.index)
-    rows = []
-    for col in KIS_MAP.values():
-        if col not in old.columns:
-            continue
-        d = (kis_df.loc[ov, col] - old.loc[ov, col]).abs()
-        scale = old.loc[ov, col].abs().clip(lower=KIS_UNIT)
-        rows.append({"investor": col, "days": len(ov), "max_abs_diff": d.max() if len(d) else float("nan"),
-                     "share_within_1pct_or_1m": float(((d <= KIS_UNIT) | (d / scale <= 0.01)).mean()) if len(d) else float("nan")})
-    return pd.DataFrame(rows)
 
 
 def flow_panel(codes: list[str], investor: str) -> pd.DataFrame:

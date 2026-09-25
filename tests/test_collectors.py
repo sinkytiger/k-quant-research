@@ -1,157 +1,111 @@
-"""수집 모듈과 pykrx 함정 (가짜 백엔드, 네트워크 없음)."""
+"""저장소·유니버스·수급 페이징 (네트워크 없음)."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from src import krx
+from src import kis
 from src.data import flows
-from src.universe import kospi200, marketcap, prices
+from src.universe import marketcap, membership, prices
 
 
-# ---------- pykrx 함정 ----------
-def test_empty_dataframe_instead_of_list_does_not_crash(fake_krx):
-    fake_krx.get_index_portfolio_deposit_file = lambda *a, **k: pd.DataFrame()
-    assert kospi200.fetch_members(pd.Timestamp("2020-01-01")) == []
+# ---------- 시점별 유니버스 (시총 상위 200) ----------
+def test_common_stock_filter():
+    assert membership.is_common_stock("005930", "삼성전자")
+    assert not membership.is_common_stock("005935", "삼성전자우")  # 우선주
+    assert not membership.is_common_stock("088980", "맥쿼리인프라")
+    assert not membership.is_common_stock("330590", "롯데리츠")
+    assert not membership.is_common_stock("0126Z5", "신규우선")
 
 
-def test_failed_login_never_imports_pykrx(monkeypatch):
-    """비밀번호가 틀리면 pykrx 를 import 하지 않는다 (import·호출마다 재로그인 → 계정 잠김)."""
-    monkeypatch.setattr(krx, "_backend", None)
-    monkeypatch.setattr(krx, "_login_checked", ("CD007", "패스워드 오류수에 의한 잠금"))
-    with pytest.raises(krx.KrxLoginError, match="CD007"):
-        krx.stock()
-    assert krx._backend is None
+def test_select_members_top_n_with_buffer():
+    cap = pd.Series({f"{i:05d}0": float(1000 - i) for i in range(30)})  # 000000 이 1위
+    top = membership.select_members(cap, {}, None, top_n=10, buffer_n=12)
+    assert top == sorted(f"{i:05d}0" for i in range(10))
+    # 기존 편입 11위(000100)는 버퍼 12위 안이라 유지, 대신 10위(000090)가 못 들어온다
+    prev = frozenset(top) - {"000090"} | {"000100"}
+    again = membership.select_members(cap, {}, prev, top_n=10, buffer_n=12)
+    assert "000100" in again and "000090" not in again and len(again) == 10
+    # 버퍼 밖(13위)이면 빠진다
+    prev2 = frozenset(top) - {"000090"} | {"000120"}
+    assert "000120" not in membership.select_members(cap, {}, prev2, top_n=10, buffer_n=12)
 
 
-def test_is_empty_handles_dataframe_list_none():
-    assert krx.is_empty(None) and krx.is_empty([]) and krx.is_empty(pd.DataFrame())
-    assert not krx.is_empty(["005930"])
+def test_build_uses_only_caps_before_snapshot_date(tmp_data):
+    def cap_file(day, caps):
+        marketcap.save(day, pd.DataFrame({"close": 1, "market_cap": caps, "volume": 1, "value": 1, "shares": 1},
+                                         index=pd.Index(list(caps.index), name="code")))
 
-
-def test_fetch_members_zero_pads_and_dedups(fake_krx):
-    fake_krx.get_index_portfolio_deposit_file = lambda *a, **k: [5930, "000660", "005930"]
-    assert kospi200.fetch_members(pd.Timestamp("2020-01-01")) == ["000660", "005930"]
+    cap_file("2024-01-31", pd.Series({"000010": 10.0, "000020": 5.0}))
+    cap_file("2024-02-01", pd.Series({"000010": 1.0, "000020": 50.0}))  # 2월 1일 당일 값은 쓰면 안 된다
+    built = membership.build("2024-02-01", "2024-02-01", top_n=1, buffer_n=1)
+    assert built == {pd.Timestamp("2024-02-01"): 1}
+    assert membership.members_asof("2024-02-15") == frozenset({"000010"})  # 1/31 시총 기준
 
 
 def test_empty_snapshot_is_never_saved(tmp_data):
     with pytest.raises(ValueError):
-        kospi200.save_snapshot(pd.Timestamp("2020-01-01"), [])
+        membership.save_snapshot(pd.Timestamp("2020-01-01"), [])
 
 
 # ---------- 종목명 ----------
 def test_save_names_does_not_overwrite_with_failure_value(tmp_data):
-    kospi200.save_names({"005930": "삼성전자"})
-    merged = kospi200.save_names({"005930": "005930", "000660": "000660"})
+    membership.save_names({"005930": "삼성전자"})
+    merged = membership.save_names({"005930": "005930", "000660": "000660"})
     assert merged["005930"] == "삼성전자"
     assert merged["000660"] == "000660"
-    merged = kospi200.save_names({"000660": "SK하이닉스"})
-    assert kospi200.load_names() == {"000660": "SK하이닉스", "005930": "삼성전자"}
+    membership.save_names({"000660": "SK하이닉스"})
+    assert membership.load_names() == {"000660": "SK하이닉스", "005930": "삼성전자"}
 
 
-def test_bulk_names_fallback(fake_krx, tmp_data):
-    df = pd.DataFrame({"종목명": ["삼성전자"]}, index=["005930"])
-    fake_krx.get_market_price_change = lambda *a, **k: df
-
-    def broken(code):
-        raise AttributeError("'NoneType' object")
-
-    fake_krx.get_market_ticker_name = broken
-    assert kospi200.fetch_names(["005930", "000060"]) == {"005930": "삼성전자", "000060": "000060"}
-
-
-# ---------- 시세 ----------
-def _krx_ohlcv(dates, closes):
+# ---------- 시세 저장소 ----------
+def _ohlcv(dates, closes):
     return pd.DataFrame({"시가": closes, "고가": closes, "저가": closes, "종가": closes,
-                         "거래량": [100] * len(closes), "등락률": 0.0}, index=pd.DatetimeIndex(dates, name="날짜"))
+                         "거래량": [100] * len(closes)}, index=pd.DatetimeIndex(dates, name="날짜"))
 
 
 def test_clean_maps_korean_columns_drops_zero_close_and_dups():
     d = pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-03", "2020-01-06"])
-    raw = _krx_ohlcv(d, [100, 101, 102, 0])
-    out = prices.clean(raw)
+    out = prices.clean(_ohlcv(d, [100, 101, 102, 0]))
     assert list(out.columns) == prices.COLS
     assert list(out.index) == list(pd.to_datetime(["2020-01-02", "2020-01-03"]))
     assert out.loc["2020-01-03", "Close"] == 102  # 중복은 마지막 값
 
 
 def test_clean_flattens_yfinance_multiindex():
-    idx = pd.to_datetime(["2020-01-02", "2020-01-03"]).tz_localize("Asia/Seoul")
-    cols = pd.MultiIndex.from_product([["Close", "High", "Low", "Open", "Volume"], ["005930.KS"]])
-    raw = pd.DataFrame(np.ones((2, 5)), index=idx, columns=cols)
-    out = prices.clean(raw)
+    idx = pd.to_datetime(["2020-01-02", "2020-01-03"]).tz_localize("America/New_York")
+    cols = pd.MultiIndex.from_product([["Close", "High", "Low", "Open", "Volume"], ["AAPL"]])
+    out = prices.clean(pd.DataFrame(np.ones((2, 5)), index=idx, columns=cols))
     assert list(out.columns) == prices.COLS and out.index.tz is None
 
 
-def test_fetch_any_falls_back_to_krx_for_delisted(fake_krx, tmp_data, monkeypatch):
-    def yf_empty(*a, **k):
-        raise ValueError("yfinance 빈 응답")
-
-    monkeypatch.setattr(prices, "fetch_yf", yf_empty)
-    fake_krx.get_market_ohlcv_by_date = lambda a, b, code, adjusted=True: _krx_ohlcv(
-        pd.bdate_range("2020-01-02", periods=3), [10, 11, 12])
-    df, src = prices.fetch_any("000060", "2020-01-01")
-    assert src == "krx" and len(df) == 3
-
-
-def test_update_refetches_full_history_when_adjustment_changes(fake_krx, tmp_data, monkeypatch):
-    monkeypatch.setattr(prices, "fetch_yf", lambda *a, **k: (_ for _ in ()).throw(ValueError("x")))
+def test_yf_update_refetches_full_history_when_adjustment_changes(tmp_data, monkeypatch):
     days = pd.bdate_range("2020-01-01", periods=30)
     calls = []
 
-    def ohlcv(a, b, code, adjusted=True):
-        calls.append(a)
+    def fake_yf(ticker, start, end=None):
+        calls.append(start)
         scale = 0.5 if len(calls) > 1 else 1.0  # 두 번째 호출부터 분할로 과거가 절반
-        sel = days[(days >= pd.Timestamp(a)) & (days <= pd.Timestamp(b))]
-        return _krx_ohlcv(sel, [100.0 * scale] * len(sel))
+        sel = days[days >= pd.Timestamp(start)]
+        return prices.clean(_ohlcv(sel, [100.0 * scale] * len(sel)))
 
-    fake_krx.get_market_ohlcv_by_date = ohlcv
-    prices.backfill("000001", "2020-01-01", krx_only=True)
-    monkeypatch.setattr(prices, "_today", lambda: days[-1])
-    df, _ = prices.update("000001", "2020-01-01")
-    assert (df["Close"] == 50.0).all()  # 이어붙이지 않고 전체를 새 기준으로 다시 받았다
+    monkeypatch.setattr(prices, "fetch_yf", fake_yf)
+    prices.backfill_yf("AAPL", "2020-01-01")
+    df = prices.update_yf("AAPL", "2020-01-01")
+    assert (df["Close"] == 50.0).all() and len(df) == 30  # 이어붙이지 않고 새 기준으로 다시 받았다
     assert len(calls) == 3
 
 
 def test_delisted_guess(tmp_data):
     today = pd.Timestamp("2026-09-01")
-    prices.save("AAA", prices.clean(_krx_ohlcv(pd.bdate_range(end="2026-08-31", periods=21), [1.0] * 21)), "yf")
-    prices.save("BBB", prices.clean(_krx_ohlcv(pd.bdate_range("2020-01-01", periods=5), [1.0] * 5)), "krx")
-    got = [c for c, _ in prices.delisted_guess(["AAA", "BBB"], today=today)]
-    assert got == ["BBB"]
+    prices.save("AAA", prices.clean(_ohlcv(pd.bdate_range(end="2026-08-31", periods=21), [1.0] * 21)), "krx_api")
+    prices.save("BBB", prices.clean(_ohlcv(pd.bdate_range("2020-01-01", periods=5), [1.0] * 5)), "krx_api")
+    assert [c for c, _ in prices.delisted_guess(["AAA", "BBB"], today=today)] == ["BBB"]
 
 
 # ---------- 시가총액 ----------
-def _cap_table(value):
-    return pd.DataFrame({"종가": [100, 200], "시가총액": [value, value], "거래량": [1, 1],
-                         "거래대금": [1, 1], "상장주식수": [1, 1]}, index=["005930", "000660"])
-
-
-def test_marketcap_zero_table_is_error_and_retries_previous_business_day(fake_krx):
-    asked = []
-
-    def get_market_cap(d, market="KOSPI"):
-        asked.append(d)
-        return _cap_table(0 if d == "20240103" else 10)  # 수요일이 휴장(0 표)
-
-    fake_krx.get_market_cap = get_market_cap
-    with pytest.raises(ValueError):
-        marketcap.validate(_cap_table(0))
-    actual, df = marketcap.fetch_cap("2024-01-03")
-    assert actual == pd.Timestamp("2024-01-02") and asked == ["20240103", "20240102"]
-    # 토요일 요청은 호출도 없이 금요일로 간다
-    asked.clear()
-    actual, _ = marketcap.fetch_cap("2024-01-06")
-    assert actual == pd.Timestamp("2024-01-05") and asked == ["20240105"]
-
-
-def test_marketcap_gives_up_after_five_business_days(fake_krx):
-    fake_krx.get_market_cap = lambda d, market="KOSPI": _cap_table(0)
-    with pytest.raises(ValueError):
-        marketcap.fetch_cap("2024-01-10")
-
-
 def test_zero_file_counts_as_missing(tmp_data):
-    good = marketcap.validate(_cap_table(10))
+    good = pd.DataFrame({"close": [1, 2], "market_cap": [10, 20], "volume": 1, "value": 1, "shares": 1},
+                        index=pd.Index(["005930", "000660"], name="code"))
     marketcap.save("2024-01-02", good)
     bad = good.copy()
     bad["market_cap"] = 0
@@ -160,20 +114,50 @@ def test_zero_file_counts_as_missing(tmp_data):
     assert [p.stem for p in marketcap.invalid_files()] == ["20240103"]
 
 
-# ---------- 수급 ----------
-def test_flows_fetch_chunks_and_keeps_investor_columns(fake_krx, tmp_data):
-    calls = []
+# ---------- 수급 (KIS 날짜 지정 페이징) ----------
+def _kis_rows(end, n=30):
+    days = pd.bdate_range(end=end, periods=n)[::-1]  # KIS 는 최신일이 먼저
+    return [{"stck_bsop_date": f"{d:%Y%m%d}", "orgn_ntby_tr_pbmn": "1", "etc_corp_ntby_tr_pbmn": "2",
+             "prsn_ntby_tr_pbmn": "-3", "frgn_ntby_tr_pbmn": "0"} for d in days]
 
-    def tv(a, b, code, on="순매수"):
-        assert on == "순매수"
-        calls.append((a, b))
-        d = pd.bdate_range(a, b)[:2]
-        return pd.DataFrame({"기관합계": 1, "기타법인": 2, "개인": -3, "외국인합계": 0, "전체": 0}, index=d)
 
-    fake_krx.get_market_trading_value_by_date = tv
-    df = flows.fetch("005930", "2020-01-01", "2022-06-30")
-    assert len(calls) == 3
+def test_flows_page_backwards_until_start(tmp_data, monkeypatch):
+    asked = []
+
+    def call(tr, path, params):
+        assert tr == flows.KIS_TR
+        asked.append(params["FID_INPUT_DATE_1"])
+        return {"rt_cd": "0", "output2": _kis_rows(params["FID_INPUT_DATE_1"])}, {}
+
+    monkeypatch.setattr(kis, "call", call)
+    df = flows.fetch("005930", "2020-01-01", "2020-04-30")
+    assert df.index.min() >= pd.Timestamp("2020-01-01") and df.index.max() == pd.Timestamp("2020-04-30")
+    assert not df.index.duplicated().any()
+    assert len(asked) == 3  # 영업일 87일 → 30거래일씩 거꾸로 3페이지
+    assert df.loc["2020-04-30", "기타법인"] == 2 * flows.KIS_UNIT  # 백만원 → 원
     assert list(df.columns) == flows.FLOW_COLS
+
+
+def test_flows_stops_before_listing(tmp_data, monkeypatch):
+    listed = pd.Timestamp("2020-03-02")
+
+    def call(tr, path, params):
+        rows = [r for r in _kis_rows(params["FID_INPUT_DATE_1"]) if pd.Timestamp(r["stck_bsop_date"]) >= listed]
+        return {"rt_cd": "0", "output2": rows}, {}
+
+    monkeypatch.setattr(kis, "call", call)
+    df = flows.fetch("NEW000", "2016-01-01", "2020-04-30")
+    assert df.index.min() == listed
+
+
+def test_flows_never_ask_today_before_cutoff():
+    """KIS 는 15:40 전 당일 날짜 조회를 막는다(OPSQ2001)."""
+    assert flows.last_complete_day(pd.Timestamp("2026-09-25 15:16")) == pd.Timestamp("2026-09-24")
+    assert flows.last_complete_day(pd.Timestamp("2026-09-25 15:40")) == pd.Timestamp("2026-09-25")
+
+
+def test_flows_save_marks_source(tmp_data):
+    df = flows.parse_kis(_kis_rows("2020-01-31", 3))
     flows.save("005930", df)
     back = flows.load("005930")
-    assert back[flows.FLOW_COLS].shape == df.shape and (back["source"] == "pykrx").all()
+    assert back[flows.FLOW_COLS].shape == df.shape and (back["source"] == "kis").all()
