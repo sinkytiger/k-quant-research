@@ -90,6 +90,14 @@ def _token(now: datetime | None = None) -> str:
     return tok
 
 
+TRANSIENT_CODES = {"EGW00201", "EGW00316", "OPSQ1002"}  # 초당 건수 초과 / 조회 처리 중 오류 / SESSION FULL(동시 접속 과다)
+
+
+def is_transient(body: dict) -> bool:
+    msg = str(body.get("msg1", ""))
+    return str(body.get("msg_cd")) in TRANSIENT_CODES or "초당" in msg or "재 조회" in msg or "재조회" in msg
+
+
 def call(tr_id: str, path: str, params: dict, tr_cont: str = "") -> tuple[dict, dict]:
     global _last
     k, s = _keys()
@@ -103,7 +111,7 @@ def call(tr_id: str, path: str, params: dict, tr_cont: str = "") -> tuple[dict, 
         "content-type": "application/json; charset=utf-8",
     }
     err = None
-    for attempt in range(3):
+    for attempt in range(4):
         with _rate_lock:
             wait = MIN_INTERVAL[env()] - (time.monotonic() - _last)
             if wait > 0:
@@ -113,13 +121,13 @@ def call(tr_id: str, path: str, params: dict, tr_cont: str = "") -> tuple[dict, 
             body, h = _get(f"{base_url()}{path}", headers, params)
         except (requests.RequestException, ValueError) as e:
             err = e
-            time.sleep(1.0 * (attempt + 1))
+            time.sleep(2.0 * (attempt + 1))
             continue
         if str(body.get("rt_cd")) == "0":
             return body, h
         err = KisError(f"{tr_id}: {body.get('msg_cd')} {body.get('msg1')}")
-        if "초당" in str(body.get("msg1", "")):  # 호출 제한 초과 → 잠시 쉬고 재시도
-            time.sleep(1.0)
+        if is_transient(body):  # 호출 제한 초과·서버 일시 오류 → 잠시 쉬고 재시도
+            time.sleep(2.0 * (attempt + 1))
             continue
         break
     raise KisError(str(err))

@@ -171,3 +171,13 @@ def test_kis_error_raises(kis_env, monkeypatch):
     monkeypatch.setattr(kis, "_get", lambda url, h, p: ({"rt_cd": "1", "msg_cd": "EGW", "msg1": "오류"}, {}))
     with pytest.raises(kis.KisError):
         kis.investor_daily("005930")
+
+
+def test_kis_retries_transient_server_error(kis_env, monkeypatch):
+    """EGW00316 '조회 처리 중 오류… 재 조회' 는 재시도하면 된다 (2026-09-26 백필 중 실제 발생)."""
+    monkeypatch.setattr(kis, "token", lambda now=None: "t")
+    monkeypatch.setattr(kis.time, "sleep", lambda s: None)
+    replies = iter([({"rt_cd": "1", "msg_cd": "EGW00316", "msg1": "조회 처리 중 오류 발생하였습니다. 재 조회 수행 부탁드립니다."}, {}),
+                    ({"rt_cd": "0", "output": [{"stck_bsop_date": "20260923"}]}, {})])
+    monkeypatch.setattr(kis, "_get", lambda url, h, p: next(replies))
+    assert kis.investor_daily("005930") == [{"stck_bsop_date": "20260923"}]
