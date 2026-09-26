@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -23,6 +24,8 @@ DOMAINS = {
 MIN_INTERVAL = {"prod": 0.06, "vts": 0.55}
 
 _last = 0.0
+_rate_lock = threading.Lock()   # 여러 스레드가 호출해도 초당 한도를 지킨다
+_token_lock = threading.Lock()  # 토큰은 1분 1회만 발급되므로 동시에 발급하지 않는다
 
 
 class KisError(RuntimeError):
@@ -63,6 +66,11 @@ def _keys() -> tuple[str, str]:
 
 def token(now: datetime | None = None) -> str:
     """캐시된 토큰이 1시간 이상 남았으면 재사용. 아니면 새로 발급."""
+    with _token_lock:
+        return _token(now)
+
+
+def _token(now: datetime | None = None) -> str:
     now = now or datetime.now()
     p = _token_path()
     if p.exists():
@@ -96,10 +104,11 @@ def call(tr_id: str, path: str, params: dict, tr_cont: str = "") -> tuple[dict, 
     }
     err = None
     for attempt in range(3):
-        wait = MIN_INTERVAL[env()] - (time.monotonic() - _last)
-        if wait > 0:
-            time.sleep(wait)
-        _last = time.monotonic()
+        with _rate_lock:
+            wait = MIN_INTERVAL[env()] - (time.monotonic() - _last)
+            if wait > 0:
+                time.sleep(wait)
+            _last = time.monotonic()
         try:
             body, h = _get(f"{base_url()}{path}", headers, params)
         except (requests.RequestException, ValueError) as e:

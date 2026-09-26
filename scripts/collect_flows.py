@@ -21,7 +21,7 @@ from src.data import flows
 from src.universe import membership
 
 
-def do_backfill(log, years: int, only_missing: bool, codes: list[str] | None) -> int:
+def do_backfill(log, years: int, only_missing: bool, codes: list[str] | None, workers: int = 4) -> int:
     codes = codes or membership.all_members()
     if len(codes) == 0:
         log.error("유니버스 스냅샷이 없다. collect_universe.py --backfill 먼저.")
@@ -29,17 +29,27 @@ def do_backfill(log, years: int, only_missing: bool, codes: list[str] | None) ->
     start = pd.Timestamp.today().normalize() - pd.DateOffset(years=years)
     if only_missing:
         codes = [c for c in codes if not flows.flow_path(c).exists()]
-    log.info("수급 백필(KIS) %d종목, 시작 %s", len(codes), f"{start:%Y-%m-%d}")
+    log.info("수급 백필(KIS) %d종목, 시작 %s, 동시 %d", len(codes), f"{start:%Y-%m-%d}", workers)
     fails = []
-    for i, c in enumerate(codes, 1):
-        try:
-            df = flows.save(c, flows.fetch(c, start), overwrite=True)
-            if i % 20 == 0 or i == len(codes):
-                log.info("[%d/%d] %s %d행 (%s~%s)", i, len(codes), c, len(df),
-                         f"{df.index.min():%Y-%m-%d}", f"{df.index.max():%Y-%m-%d}")
-        except Exception as e:  # noqa: BLE001
-            fails.append((c, str(e)))
-            log.warning("[%d/%d] %s: %s", i, len(codes), c, e)
+
+    def one(c):
+        return c, flows.save(c, flows.fetch(c, start), overwrite=True)
+
+    # 응답 지연(~0.5초)이 병목이라 종목 단위로 병렬. 초당 한도는 kis.call 의 락이 지킨다.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(one, c): c for c in codes}
+        for i, f in enumerate(as_completed(futs), 1):
+            c = futs[f]
+            try:
+                _, df = f.result()
+                if i % 20 == 0 or i == len(codes):
+                    log.info("[%d/%d] %s %d행 (%s~%s)", i, len(codes), c, len(df),
+                             f"{df.index.min():%Y-%m-%d}", f"{df.index.max():%Y-%m-%d}")
+            except Exception as e:  # noqa: BLE001
+                fails.append((c, str(e)))
+                log.warning("[%d/%d] %s: %s", i, len(codes), c, e)
     pd.DataFrame(fails, columns=["code", "error"]).to_csv(
         config.LOGS / "flows_failures.csv", index=False, encoding="utf-8-sig")
     log.info("완료: 성공 %d, 실패 %d", len(codes) - len(fails), len(fails))
@@ -100,6 +110,7 @@ def main(argv=None) -> int:
     ap.add_argument("--years", type=int, default=10)
     ap.add_argument("--only-missing", action="store_true")
     ap.add_argument("--codes", nargs="*")
+    ap.add_argument("--workers", type=int, default=4, help="동시 종목 수 (KIS 초당 20건 안에서)")
     a = ap.parse_args(argv)
     log = cli.setup("collect_flows")
 
@@ -107,7 +118,7 @@ def main(argv=None) -> int:
     if a.check:
         rc |= 0 if cli.kis_check(log) else 1
     if a.backfill:
-        rc |= do_backfill(log, a.years, a.only_missing, a.codes)
+        rc |= do_backfill(log, a.years, a.only_missing, a.codes, a.workers)
     if a.update:
         rc |= do_update(log, a.years, a.codes)
     if a.status:
