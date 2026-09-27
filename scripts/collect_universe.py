@@ -64,20 +64,31 @@ def collect_snapshots(log, datasets: list[str], start, end) -> int:
     return 0
 
 
-def rebuild(log, markets: list[str]) -> None:
-    for ds in markets:
-        raw = krx_daily.load_snapshots(ds)
-        tidy = krx_daily.tidy_stock(raw)
+def rebuild(log, markets: list[str] | None = None) -> None:
+    """스냅샷 → 종목별 수정주가·시총·종목명·벤치.
+
+    markets 인자와 상관없이 받아 둔 시장(stk, ksq)을 **모두 합쳐** 종목별로 한 번에 만든다.
+    코스닥→코스피 이전상장 종목(카카오, 셀트리온 등)은 같은 코드로 두 시장에 나타나므로,
+    시장별로 따로 쓰면 뒤에 쓴 시장이 앞의 이력을 덮어쓴다.
+    """
+    parts = []
+    for ds in krx_daily.MARKETS:
+        tidy = krx_daily.tidy_stock(krx_daily.load_snapshots(ds))
         if tidy.empty:
-            log.warning("[%s] 스냅샷 없음", ds)
             continue
-        built = krx_daily.build_prices(tidy)
-        log.info("[%s] 종목별 수정주가 %d종목 저장 (%s~%s)", ds, len(built),
-                 f"{tidy['Date'].min():%Y-%m-%d}", f"{tidy['Date'].max():%Y-%m-%d}")
+        log.info("[%s] %d행 (%s~%s)", ds, len(tidy), f"{tidy['Date'].min():%Y-%m-%d}", f"{tidy['Date'].max():%Y-%m-%d}")
         if ds == "stk":
-            n = krx_daily.build_marketcap(tidy)
-            log.info("[stk] 시가총액 스냅샷 %d일", n)
-        membership.save_names(krx_daily.names_from(tidy))
+            log.info("[stk] 시가총액 스냅샷 %d일", krx_daily.build_marketcap(tidy))
+        parts.append(tidy)
+    if not parts:
+        log.warning("스냅샷 없음")
+        return
+    tidy = pd.concat(parts, ignore_index=True)
+    del parts
+    built = krx_daily.build_prices(tidy)
+    moved = krx_daily.transferred_codes(tidy)
+    log.info("종목별 수정주가 %d종목 저장 (시장 이전 종목 %d개 이어 붙임)", len(built), len(moved))
+    membership.save_names(krx_daily.names_from(tidy))
     b = krx_daily.build_bench()
     log.info("벤치마크: %s", b)
 

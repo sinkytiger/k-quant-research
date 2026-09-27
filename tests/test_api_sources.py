@@ -181,3 +181,25 @@ def test_kis_retries_transient_server_error(kis_env, monkeypatch):
                     ({"rt_cd": "0", "output": [{"stck_bsop_date": "20260923"}]}, {})])
     monkeypatch.setattr(kis, "_get", lambda url, h, p: next(replies))
     assert kis.investor_daily("005930") == [{"stck_bsop_date": "20260923"}]
+
+
+def test_market_transfer_keeps_both_histories(tmp_data):
+    """카카오처럼 코스닥→코스피 이전상장 종목은 두 시장 이력을 이어 붙인다(한쪽이 덮어쓰면 안 된다)."""
+    ksq = pd.DataFrame([dict(_row("20170706", "035720", 100_000, 0), MKT_NM="KOSDAQ"),
+                        dict(_row("20170707", "035720", 101_000, 1_000), MKT_NM="KOSDAQ")])
+    stk = pd.DataFrame([dict(_row("20170710", "035720", 102_000, 1_000), MKT_NM="KOSPI")])
+    tidy = pd.concat([krx_daily.tidy_stock(stk), krx_daily.tidy_stock(ksq)], ignore_index=True)
+    assert krx_daily.build_prices(tidy) == {"035720": 3}
+    df = prices.load("035720")
+    assert str(df.index.min())[:10] == "2017-07-06" and str(df.index.max())[:10] == "2017-07-10"
+    assert krx_daily.transferred_codes(tidy) == ["035720"]
+
+
+def test_kis_padding_rows_before_listing_are_dropped():
+    """KIS 는 상장 전 날짜를 종가 빈 칸·수급 0 으로 채운다 (489790, 2024-09-26 이전 실제 응답)."""
+    rows = [{"stck_bsop_date": "20240927", "stck_clpr": "35400", "orgn_ntby_tr_pbmn": "1",
+             "etc_corp_ntby_tr_pbmn": "0", "prsn_ntby_tr_pbmn": "85750", "frgn_ntby_tr_pbmn": "0"},
+            {"stck_bsop_date": "20240926", "stck_clpr": "", "orgn_ntby_tr_pbmn": "0",
+             "etc_corp_ntby_tr_pbmn": "0", "prsn_ntby_tr_pbmn": "0", "frgn_ntby_tr_pbmn": "0"}]
+    df = flows.parse_kis(rows)
+    assert list(df.index) == [pd.Timestamp("2024-09-27")]

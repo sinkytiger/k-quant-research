@@ -31,8 +31,18 @@ def flow_path(code: str) -> Path:
     return config.FLOWS_DIR / f"{code}.csv"
 
 
+def _traded(r: dict) -> bool:
+    """KIS 는 상장 전·상폐 후 날짜를 종가 빈 칸, 수급 0 으로 채워 준다. 그런 행은 거래일이 아니다."""
+    if "stck_clpr" not in r:  # 종가 필드가 없는 응답(테스트 등)은 날짜만 본다
+        return True
+    try:
+        return float(str(r["stck_clpr"]).replace(",", "") or 0) > 0
+    except ValueError:
+        return False
+
+
 def parse_kis(rows: list[dict]) -> pd.DataFrame:
-    rows = [r for r in rows if r.get("stck_bsop_date")]
+    rows = [r for r in rows if r.get("stck_bsop_date") and _traded(r)]
     if len(rows) == 0:
         return pd.DataFrame(columns=FLOW_COLS)
     df = pd.DataFrame(rows)

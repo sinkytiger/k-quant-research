@@ -127,13 +127,25 @@ NUM = {"TDD_OPNPRC": "Open", "TDD_HGPRC": "High", "TDD_LWPRC": "Low", "TDD_CLSPR
        "MKTCAP": "MarketCap", "LIST_SHRS": "Shares"}
 
 
+MARKETS = ("stk", "ksq")  # 종목 시세 데이터셋. 같은 코드가 두 시장에 나올 수 있다(이전상장)
+
+
+def transferred_codes(tidy: pd.DataFrame) -> list[str]:
+    """두 시장(MKT_NM)에 모두 나타난 코드 = 시장 이전 종목."""
+    if tidy.empty or "market" not in tidy:
+        return []
+    n = tidy.groupby("code")["market"].nunique()
+    return sorted(n[n > 1].index)
+
+
 def tidy_stock(raw: pd.DataFrame) -> pd.DataFrame:
     """원 스냅샷(문자열) → 숫자형 long 표 (Date, code, ...)."""
     if raw.empty:
         return pd.DataFrame()
     df = pd.DataFrame({"Date": pd.to_datetime(raw["BAS_DD"], format="%Y%m%d"),
                        "code": raw["ISU_CD"].astype(str).str.zfill(6),
-                       "name": raw.get("ISU_NM")})
+                       "name": raw.get("ISU_NM"),
+                       "market": raw.get("MKT_NM")})
     for src, dst in NUM.items():
         df[dst] = pd.to_numeric(raw[src].astype(str).str.replace(",", ""), errors="coerce")
     return df
