@@ -51,6 +51,20 @@ def invalid_files() -> list[Path]:
     return [p for p in sorted(config.MARKETCAP_DIR.glob("*.csv")) if not is_valid_file(p)]
 
 
+def cap_panel(codes=None, start=None, end=None) -> pd.DataFrame:
+    """날짜 × 종목 시가총액 패널 (그날 종가 기준 = 그날 장 마감 후에 아는 값)."""
+    want = None if codes is None else set(codes)
+    cols = {}
+    for d in saved_days():
+        if (start is not None and d < pd.Timestamp(start)) or (end is not None and d > pd.Timestamp(end)):
+            continue
+        s = load(d)["market_cap"]
+        cols[d] = s if want is None else s[s.index.isin(want)]
+    if not cols:
+        return pd.DataFrame()
+    return pd.DataFrame(cols).T.sort_index()
+
+
 def cap_asof(when, codes=None) -> pd.Series:
     """when 이전 가장 최근 스냅샷의 시가총액. 미래 스냅샷은 보지 않는다."""
     days = [d for d in saved_days() if d <= pd.Timestamp(when)]

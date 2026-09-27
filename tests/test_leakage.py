@@ -157,3 +157,31 @@ def test_labels_ranked_within_pointintime_universe():
     assert labels["X"].isna().all()
     without_x = attach_labels(close[["A", "B", "C"]], universe[["A", "B", "C"]], h=5, kind="cs_rank")
     pd.testing.assert_frame_equal(labels[["A", "B", "C"]], without_x)
+
+
+# ---------- 피처 라이브러리 ----------
+def test_price_features_use_only_past_prices():
+    from src.features.library import price_features
+
+    close, _ = _panel(n=300, cols=["A", "B", "C"], seed=5)
+    t = close.index[280]
+    base = price_features(close)
+    fut = close.copy()
+    fut.loc[close.index[281]:] *= 3.0  # t 이후 가격 폭등
+    after = price_features(fut)
+    for name in base:
+        pd.testing.assert_series_equal(base[name].loc[:t, "A"], after[name].loc[:t, "A"], check_names=False)
+
+
+def test_flow_feature_ignores_same_day_flow():
+    from src.features.library import flow_features
+
+    close, vol = _panel(n=80)
+    value = close * vol
+    flow = pd.DataFrame(1.0, index=close.index, columns=close.columns)
+    t = close.index[60]
+    base = flow_features({"frgn": flow}, value)["flow_frgn"]
+    f2 = flow.copy()
+    f2.loc[t:, "A"] = 1e12
+    after = flow_features({"frgn": f2}, value)["flow_frgn"]
+    assert after.loc[t, "A"] == pytest.approx(base.loc[t, "A"])
