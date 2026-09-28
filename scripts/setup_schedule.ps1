@@ -1,4 +1,4 @@
-# K-Quant 작업 스케줄러 등록 (현재 사용자, 관리자 권한 불필요)
+﻿# K-Quant 작업 스케줄러 등록 (현재 사용자, 관리자 권한 불필요)
 #   KQuant-Daily : 월~토 08:40  run_daily.bat   (KRX 는 D일 데이터를 D+1 08시 전후 제공)
 #   KQuant-Weekly: 토   09:30  run_weekly.bat
 # StartWhenAvailable: 예약 시각에 PC 가 꺼져 있었으면 켜진 뒤 바로 실행 (schtasks.exe 로는 못 켠다)
