@@ -49,3 +49,11 @@ def test_min_listing_days_excludes_new_listings():
     uni = pd.DataFrame(True, index=idx, columns=close.columns)
     ok = bt.eligible(close, uni, min_listing_days=252)
     assert not ok["NEW"].any() and ok["OLD"].iloc[-1]
+
+
+def test_cap_weighting_uses_signal_day_size():
+    idx = pd.bdate_range("2024-01-01", periods=5)
+    score = pd.Series({"A": 1.0, "B": 1.0, "C": 0.0})
+    ok = pd.Series(True, index=score.index)
+    w = bt.target_weights(score, ok, top_frac=2 / 3, size=pd.Series({"A": 300.0, "B": 100.0, "C": 1e9}))
+    assert w.to_dict() == pytest.approx({"A": 0.75, "B": 0.25})  # C 는 제외돼서 시총이 커도 비중 0

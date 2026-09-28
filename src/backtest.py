@@ -36,18 +36,24 @@ def eligible(close: pd.DataFrame, universe: pd.DataFrame, min_listing_days: int 
     return universe.reindex(index=close.index, columns=close.columns, fill_value=False).astype(bool) & (seen >= min_listing_days)
 
 
-def target_weights(score: pd.Series, ok: pd.Series, top_frac: float) -> pd.Series:
+def target_weights(score: pd.Series, ok: pd.Series, top_frac: float,
+                   size: pd.Series | None = None) -> pd.Series:
+    """점수 상위 top_frac 선택. size 가 있으면 그 값에 비례(시총가중), 없으면 동일가중."""
     s = score.where(ok).dropna()
     if s.empty:
         return pd.Series(dtype=float)
     n = max(1, int(np.ceil(len(s) * top_frac)))
     pick = s.sort_values(ascending=False).index[:n]
+    if size is not None:
+        w = size.reindex(pick).where(lambda x: x > 0).dropna()
+        if w.sum() > 0:
+            return w / w.sum()
     return pd.Series(1.0 / n, index=pick)
 
 
 def run(close: pd.DataFrame, score: pd.DataFrame, ok: pd.DataFrame, start, end,
         rebalance_every: int = 20, top_frac: float = 0.2, cost: CostModel = KR_RETAIL,
-        delay: int = 1) -> pd.DataFrame:
+        delay: int = 1, size: pd.DataFrame | None = None) -> pd.DataFrame:
     """일별 결과: ret(비용 차감), gross, cost, turnover, n_hold."""
     close = close.dropna(how="all")
     rets = daily_returns(close).fillna(0.0)  # 상폐 후 NaN → 0 (현금화)
@@ -58,7 +64,8 @@ def run(close: pd.DataFrame, score: pd.DataFrame, ok: pd.DataFrame, start, end,
     for t in signal_days:
         j = pos[t] + delay
         if j < len(close.index) and close.index[j] <= idx[-1]:
-            trades[close.index[j]] = target_weights(score.loc[t], ok.loc[t], top_frac)
+            trades[close.index[j]] = target_weights(score.loc[t], ok.loc[t], top_frac,
+                                                     None if size is None else size.loc[t])
 
     w = pd.Series(dtype=float)
     out = []
