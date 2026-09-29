@@ -20,6 +20,19 @@ import pandas as pd
 LEXICON = Path(__file__).with_name("lexicon_ko.json")
 CUTOFF = "15:30"
 
+# 자동 시황 기사(이미 움직인 주가를 전하는 사후 보도) 제외 규칙 v1 — 2026-09-29, 수익률 보기 전에 고정.
+# 감성 점수가 과거 수익률(단기 반전 효과)을 다시 재는 것을 막는다.
+MARKET_AUTO_V1 = re.compile(
+    r"[+\-−]?\d+(?:\.\d+)?\s?%"           # 등락률 숫자 (예: +3.71%)
+    r"|상한가|하한가"
+    r"|순매수\s?상위|순매도\s?상위|매수\s?상위|매도\s?상위|순매수,\s?도|순매수·순매도"
+    r"|\[장중수급포착\]|<유>|특징주"
+)
+
+
+def is_market_auto(title: str) -> bool:
+    return bool(MARKET_AUTO_V1.search(str(title)))
+
 
 @lru_cache(maxsize=1)
 def lexicon() -> tuple[list[tuple[str, int]], str]:
@@ -62,13 +75,15 @@ def assign_trade_date(dt: pd.Series, trading_days: pd.DatetimeIndex) -> pd.Serie
     return out
 
 
-def daily_table(articles: pd.DataFrame, trading_days: pd.DatetimeIndex) -> pd.DataFrame:
-    """한 종목 기사 → 거래일별 n(기사 수), n_sent(감성 있는 기사 수), score_sum."""
+def daily_table(articles: pd.DataFrame, trading_days: pd.DatetimeIndex, exclude_auto: bool = True) -> pd.DataFrame:
+    """한 종목 기사 → 거래일별 n(기사 수), n_sent(감성 있는 기사 수), score_sum. 자동 시황 기사는 기본 제외."""
     if articles.empty:
         return pd.DataFrame(columns=["n", "n_sent", "score_sum"])
     a = articles.copy()
     a["tday"] = assign_trade_date(a["dt"], trading_days)
     a = a.dropna(subset=["tday"])
+    if exclude_auto:
+        a = a[~a["title"].map(is_market_auto)]
     a["t_norm"] = a["title"].map(_norm)
     a = a.drop_duplicates(["tday", "t_norm"])
     sc = a["title"].map(score_title)
@@ -82,6 +97,7 @@ def features(tables: dict[str, pd.DataFrame], trading_days: pd.DatetimeIndex,
              window: int = 5, attn_base: int = 60) -> dict[str, pd.DataFrame]:
     """sent_5d: 최근 window 거래일 감성 점수 합 / 감성 기사 수 (평균 톤, 기사 없으면 NaN)
     attn_5d: log(1 + 최근 window 일 기사 수) − log(1 + 직전 attn_base 일 하루 평균 기사 수 × window) (평소 대비 관심)
+    sent_attn: sent_5d × (그날 attn_5d 의 횡단면 백분위) — 관심이 몰린 종목의 톤에 가중
     """
     idx = pd.DatetimeIndex(trading_days)
     n = pd.DataFrame({c: t["n"] for c, t in tables.items()}).reindex(idx).fillna(0)
@@ -91,4 +107,5 @@ def features(tables: dict[str, pd.DataFrame], trading_days: pd.DatetimeIndex,
     sent = ss_w / ns_w.where(ns_w > 0)
     base = n.shift(window).rolling(attn_base, min_periods=attn_base // 2).mean() * window
     attn = np.log1p(n_w) - np.log1p(base)
-    return {"sent_5d": sent, "attn_5d": attn, "news_n_5d": n_w}
+    attn_pct = attn.rank(axis=1, pct=True)
+    return {"sent_5d": sent, "attn_5d": attn, "sent_attn": sent * attn_pct, "news_n_5d": n_w}

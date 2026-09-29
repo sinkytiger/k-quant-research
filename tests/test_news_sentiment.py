@@ -41,3 +41,14 @@ def test_features_do_not_use_future_articles():
     for k in base:
         assert base[k].loc[:t, "A"].equals(after[k].loc[:t, "A"])
     assert after["sent_5d"].loc[td[101], "A"] < base["sent_5d"].loc[td[101], "A"]
+
+
+def test_market_auto_headlines_are_excluded():
+    auto = ["[장중수급포착] KCC, 외국인 6일 연속 순매수행진... 주가 +3.71%", "<유>LG전자우, 상한가 진입.. +29.99% ↑",
+            "외국계 순매수,도 상위종목(코스피) 금액기준", "[특징주] 한미반도체, 급등", "삼성전기(-5.73%) 등 순매도"]
+    keep = ["CJ대한통운 1분기 영업이익 921억원…작년 동기 대비 증가", "실적 랠리로 '코스피 5000' 간다", "HBM4 황금수율 잡고 물량전"]
+    assert all(ns.is_market_auto(t) for t in auto)
+    assert not any(ns.is_market_auto(t) for t in keep)
+    td = pd.bdate_range("2026-09-01", periods=3)
+    a = pd.DataFrame({"dt": pd.to_datetime(["2026-09-01 09:00:00", "2026-09-01 09:10:00"]), "title": [auto[3], keep[0]]})
+    assert ns.daily_table(a, td).loc["2026-09-01", "n"] == 1
