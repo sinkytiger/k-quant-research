@@ -1,0 +1,28 @@
+name: tests
+
+# 누수 방지·수집 규칙 테스트. 가짜 데이터로만 돌아서 API 키·네트워크·로컬 데이터가 필요 없다.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: pytest
+        env:
+          TZ: Asia/Seoul
+          KQ_DATA_DIR: ${{ runner.temp }}/kqdata
+        run: python -m pytest -q -p no:warnings
