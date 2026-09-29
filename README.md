@@ -1,5 +1,7 @@
 # K-Quant-Daily
 
+[![tests](https://github.com/sinkytiger/k-quant-research/actions/workflows/tests.yml/badge.svg)](https://github.com/sinkytiger/k-quant-research/actions/workflows/tests.yml)
+
 생존편향 없는 한국 주식 퀀트 리서치 파이프라인. **공식 API만** 쓴다(KRX Open API, 한국투자증권 KIS Open API).
 로그인 스크래핑은 쓰지 않는다.
 
