@@ -16,14 +16,16 @@ def load_panel(codes: list[str] | None = None, total_return: bool = False) -> di
     """total_return=True 면 배당 포함 총수익 가격(src/universe/total_return.py).
     총수익 전략은 KODEX200(분배금 포함)과, 가격 전략은 KOSPI200 가격지수와 비교한다."""
     codes = codes if codes is not None else members.all_members()
+    price = prices.panel(codes, "Close")
     if total_return:
         from src.universe.total_return import tr_panel
 
-        close = tr_panel(codes)
+        close = tr_panel(codes).reindex_like(price)
     else:
-        close = prices.panel(codes, "Close")
+        close = price
     volume = prices.panel(codes, "Volume").reindex_like(close)
-    return {"close": close, "volume": volume}
+    # 유동성 필터(거래대금 = 가격 × 거래량)는 price 로 계산한다. TR 가격은 누적 배당만큼 부풀어 있다.
+    return {"close": close, "price": price, "volume": volume}
 
 
 def universe_mask(close: pd.DataFrame, volume: pd.DataFrame, membership: dict | None = None,
