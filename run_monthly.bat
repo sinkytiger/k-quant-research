@@ -11,6 +11,7 @@ if not exist logs mkdir logs
 set "LOG=logs\monthly_%MONTH%.log"
 "%PY%" scripts\collect_universe.py --membership --status >> "%LOG%" 2>&1
 "%PY%" scripts\collect_marketcap.py --update --status >> "%LOG%" 2>&1
+"%PY%" scripts\collect_dividends.py >> "%LOG%" 2>&1
 "%PY%" -m pytest -q -p no:warnings >> "%LOG%" 2>&1
 echo [pytest] exit %errorlevel% >> "%LOG%"
 endlocal

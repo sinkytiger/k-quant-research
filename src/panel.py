@@ -12,9 +12,16 @@ from src.universe import liquidity, prices
 from src.universe import membership as members
 
 
-def load_panel(codes: list[str] | None = None) -> dict[str, pd.DataFrame]:
+def load_panel(codes: list[str] | None = None, total_return: bool = False) -> dict[str, pd.DataFrame]:
+    """total_return=True 면 배당 포함 총수익 가격(src/universe/total_return.py).
+    총수익 전략은 KODEX200(분배금 포함)과, 가격 전략은 KOSPI200 가격지수와 비교한다."""
     codes = codes if codes is not None else members.all_members()
-    close = prices.panel(codes, "Close")
+    if total_return:
+        from src.universe.total_return import tr_panel
+
+        close = tr_panel(codes)
+    else:
+        close = prices.panel(codes, "Close")
     volume = prices.panel(codes, "Volume").reindex_like(close)
     return {"close": close, "volume": volume}
 
