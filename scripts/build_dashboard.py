@@ -214,6 +214,48 @@ def research() -> dict:
             "backtest": backtest, "ic_by_year": by_year}
 
 
+def quality_section(log, window: int = 60) -> dict:
+    """데이터 품질 점검 (최근 window 거래일). 심각도: critical > serious > warning > info."""
+    from src import quality as q
+    from src.data import news
+
+    cal = krx_daily.saved_days("stk")
+    recent = cal[-window:]
+    asof = recent[-1]
+    names = membership.load_names()
+    tidy = krx_daily.tidy_stock(krx_daily.load_snapshots("stk", start=cal[-window - 1]))
+    t = q.tidy_returns(tidy)
+    t = t[t["Date"] >= recent[0]]
+    cur = sorted(membership.current_members())
+    value = tidy[tidy["code"].isin(cur)].pivot(index="Date", columns="code", values="Value").loc[recent[0]:]
+    net = {who: flows.flow_panel(cur, col).loc[recent[0]:] for col, who in
+           (("외국인합계", "외국인"), ("기관합계", "기관"), ("개인", "개인"))}
+    bad_caps = marketcap.invalid_files()
+    price_last = {c: (prices.load(c).index.max() if prices.price_path(c).exists() else None) for c in cur}
+    flow_last = {c: (flows.load(c).index.max() if flows.flow_path(c).exists() else None) for c in cur}
+    news_last = {}
+    for c in cur:
+        df = news.load(c)
+        news_last[c] = df["dt"].max().normalize() if len(df) else None
+    caldx = pd.DatetimeIndex(cal)
+    issues = [
+        q.holiday_conflicts(krx_daily.load_holidays(), set(cal)),
+        q.price_jumps(t, set(cur)),
+        q.flow_exceeds_value(net, value, names),
+        q.Issue("무효 시가총액 파일 (전부 0)", "serious" if bad_caps else "ok",
+                f"{len(bad_caps)}개" if bad_caps else "없음", [p.name for p in bad_caps][:30]),
+        q.missing_days(recent, {ds: set(krx_daily.saved_days(ds)) for ds in ("ksq", "idx_kospi", "etf")}),
+        q.stale(price_last, asof, caldx, names, 0, "시세 끊김 (현재 유니버스)", "warning"),
+        q.stale(flow_last, asof, caldx, names, 3, "수급 끊김 (현재 유니버스, 3거래일 초과)", "warning"),
+        q.stale(news_last, asof, caldx, names, 20, "뉴스 끊김 (현재 유니버스, 20거래일 초과)", "info"),
+        q.adjustments(t),
+    ]
+    out = [i.to_dict() for i in issues]
+    counts = {sev: sum(1 for i in out if i["severity"] == sev) for sev in ("critical", "serious", "warning", "info", "ok")}
+    log.info("품질 점검 %d개: %s", len(out), counts)
+    return {"window": [f"{recent[0]:%Y-%m-%d}", f"{asof:%Y-%m-%d}"], "issues": out, "counts": counts}
+
+
 def regime_section(log) -> dict:
     """시장 국면: 변동성·시장폭·200일선 위 비율·투자자별 순매수 (전체 이력 + 현재 백분위)."""
     from src import regime
@@ -301,7 +343,7 @@ def main(argv=None) -> int:
     log = cli.setup("build_dashboard")
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
             "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
-            "regime": regime_section(log)}
+            "regime": regime_section(log), "quality": quality_section(log)}
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)
