@@ -205,6 +205,38 @@ def research() -> dict:
             "backtest": backtest}
 
 
+def regime_section(log) -> dict:
+    """시장 국면: 변동성·시장폭·200일선 위 비율·투자자별 순매수 (전체 이력 + 현재 백분위)."""
+    from src import regime
+    from src.universe import liquidity
+
+    k = prices.load_bench("KOSPI200")["Close"]
+    vol = regime.realized_vol(k, 20) * 100
+    br = regime.breadth(krx_daily.load_snapshots("stk"))["ratio"].rolling(20, min_periods=15).mean() * 100
+    m = membership.load_membership()
+    codes = membership.all_members(m)
+    close = prices.panel(codes, "Close")
+    mask = liquidity.membership_mask(close.index, close.columns, m)
+    ab = regime.above_ma(close, mask, 200) * 100
+    fl = {}
+    for col, key in (("외국인합계", "frgn"), ("기관합계", "inst"), ("개인", "indiv")):
+        f = flows.flow_panel(codes, col).reindex(close.index)
+        fl[key] = regime.investor_flow(f, mask).rolling(20, min_periods=15).sum() / 1e12
+    start = pd.Timestamp("2016-01-01")
+    cut = lambda s: s[s.index >= start]  # noqa: E731
+    tiles = {
+        "vol": {"value": vol.dropna().iloc[-1], "pct": regime.percentile(cut(vol))},
+        "breadth": {"value": br.dropna().iloc[-1], "pct": regime.percentile(cut(br))},
+        "above200": {"value": ab.dropna().iloc[-1], "pct": regime.percentile(cut(ab))},
+        "frgn": {"value": fl["frgn"].dropna().iloc[-1], "pct": regime.percentile(cut(fl["frgn"]))},
+    }
+    log.info("국면: 변동성 %.1f%%, 시장폭 %.1f%%, 200일선 위 %.1f%%, 외국인 20일 %.2f조",
+             tiles["vol"]["value"], tiles["breadth"]["value"], tiles["above200"]["value"], tiles["frgn"]["value"])
+    return {"asof": f"{close.index.max():%Y-%m-%d}", "tiles": tiles,
+            "vol": series_points(cut(vol)), "breadth": series_points(cut(br)), "above200": series_points(cut(ab)),
+            "flows": {k2: series_points(cut(v)) for k2, v in fl.items()}}
+
+
 def etf_section(log) -> dict:
     """ETF 성과표·자금 흐름 (전 종목 스냅샷이 있는 구간)."""
     from src import etf
@@ -259,7 +291,8 @@ def monitor(log) -> dict:
 def main(argv=None) -> int:
     log = cli.setup("build_dashboard")
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
-            "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log)}
+            "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
+            "regime": regime_section(log)}
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)

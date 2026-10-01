@@ -140,6 +140,24 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="chart" id="ch-dd"></div>
       <details><summary>표로 보기 (월말)</summary><div class="scroll" id="tb-market"></div></details>
     </div>
+    <h2 style="margin-top: 28px">시장 국면</h2>
+    <div class="sub" id="regime-sub"></div>
+    <div class="tiles" id="regime-tiles"></div>
+    <div class="card">
+      <div class="sub">KOSPI200 20일 실현변동성 (연율, %)</div>
+      <div class="chart" id="ch-vol"></div>
+    </div>
+    <div class="card">
+      <div class="sub">시장폭 (%)</div>
+      <div class="legend" id="lg-breadth"></div>
+      <div class="chart" id="ch-breadth"></div>
+      <div class="note">오른 종목 비율 = 코스피 전 종목 중 오른 종목 ÷ (오른 + 내린), 20일 평균. 200일선 위 = 그날 유니버스(시총 상위 200) 중 종가가 200일 평균 위인 비율.</div>
+    </div>
+    <div class="card">
+      <div class="sub">투자자별 20일 누적 순매수 (조원, 유니버스 시총 상위 200 합계)</div>
+      <div class="legend" id="lg-flows"></div>
+      <div class="chart" id="ch-flows"></div>
+    </div>
   </section>
 
   <section id="s-etf" role="tabpanel" data-tab="etf">
@@ -264,6 +282,7 @@ function lineChart(host, series, opt = {}) {
   const xs = series[0].points.map((p) => +new Date(p[0]));
   const x0 = Math.min(...all.map((p) => +new Date(p[0]))), x1 = Math.max(...all.map((p) => +new Date(p[0])));
   let lo = Math.min(...all.map((p) => p[1])), hi = Math.max(...all.map((p) => p[1]));
+  for (const r of opt.refs || []) { lo = Math.min(lo, r.y); hi = Math.max(hi, r.y); }
   if (opt.zeroTop) hi = 0;
   const pad = (hi - lo) * 0.06 || 1; lo -= opt.zeroTop ? pad : pad; hi += opt.zeroTop ? 0 : pad;
   const X = (t) => m.l + (t - x0) / (x1 - x0 || 1) * (W - m.l - m.r);
@@ -285,6 +304,10 @@ function lineChart(host, series, opt = {}) {
     }
   }
   el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, stroke: css("--axis"), "stroke-width": 1 }, svg);
+  for (const r of opt.refs || []) {
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(r.y), y2: Y(r.y), stroke: css("--axis"), "stroke-width": 1 }, svg);
+    const t = el("text", { x: m.l + 4, y: Y(r.y) - 4 }, svg); t.textContent = r.label;
+  }
   for (const s of series) {
     const d = s.points.map((p, i) => (i ? "L" : "M") + X(+new Date(p[0])).toFixed(1) + " " + Y(p[1]).toFixed(1)).join("");
     if (s.fill) el("path", { d: d + `L${X(+new Date(s.points.at(-1)[0]))} ${Y(Math.min(0, hi))}L${X(+new Date(s.points[0][0]))} ${Y(Math.min(0, hi))}Z`, fill: s.fill, stroke: "none" }, svg);
@@ -436,6 +459,32 @@ function renderMarket() {
   table(t, [{ key: "mo", label: "월" }, { key: "k", label: "KOSPI200 (=100)", num: true, fmt: (v) => fmtNum(v, 1) },
     { key: "e", label: "KODEX200 (=100)", num: true, fmt: (v) => fmtNum(v, 1) }, { key: "dd", label: "낙폭", num: true, fmt: (v) => v == null ? "–" : v.toFixed(1) + "%" }], rows);
 }
+function renderRegime() {
+  const G = D.regime;
+  if (!G) { $("#regime-sub").textContent = "국면 데이터 없음"; return; }
+  // p = 이력 중 오늘 값 이하인 비율. 위쪽 절반이면 "상위", 아래쪽이면 "하위"로 읽게 한다.
+  const pct = (p) => p == null ? "" : p >= 0.5 ? `2016년 이후 상위 ${Math.max(1, Math.round((1 - p) * 100))}%`
+                                                 : `2016년 이후 하위 ${Math.max(1, Math.round(p * 100))}%`;
+  const T = G.tiles;
+  $("#regime-sub").textContent = `${G.asof} 기준 · 표시용 지표이며 매매 신호가 아니다 (변동성 타게팅은 사전 등록 검증에서 불통과)`;
+  $("#regime-tiles").innerHTML = [
+    { label: "20일 변동성 (KOSPI200)", value: `${T.vol.value.toFixed(1)}%`, delta: pct(T.vol.pct) },
+    { label: "오른 종목 비율 (20일)", value: `${T.breadth.value.toFixed(1)}%`, delta: pct(T.breadth.pct) },
+    { label: "200일선 위 종목", value: `${T.above200.value.toFixed(0)}%`, delta: pct(T.above200.pct) },
+    { label: "외국인 20일 순매수", value: `${T.frgn.value >= 0 ? "+" : "−"}${Math.abs(T.frgn.value).toFixed(2)}조`, delta: pct(T.frgn.pct) },
+  ].map((t) => `<div class="tile"><div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div><div class="delta">${esc(t.delta)}</div></div>`).join("");
+  lineChart($("#ch-vol"), [{ name: "20일 변동성", color: css("--series-1"), fill: css("--fill-1"), points: sliceRange(G.vol) }],
+    { height: 180, yfmt: (v) => v.toFixed(0) + "%", aria: "KOSPI200 20일 변동성" });
+  const BS = [{ name: "오른 종목 비율 (20일 평균)", short: "오른 종목", color: css("--series-1"), points: sliceRange(G.breadth) },
+              { name: "200일선 위 종목 (유니버스)", short: "200일선 위", color: css("--series-2"), points: sliceRange(G.above200) }];
+  legend($("#lg-breadth"), BS);
+  lineChart($("#ch-breadth"), BS, { height: 200, yfmt: (v) => v.toFixed(0) + "%", endLabels: true, refs: [{ y: 50, label: "50%" }], aria: "시장폭" });
+  const FS = [["frgn", "--series-1", "외국인"], ["inst", "--series-2", "기관"], ["indiv", "--series-3", "개인"]]
+    .map(([k, c, n]) => ({ name: n, short: n, color: css(c), points: sliceRange(G.flows[k] || []) }));
+  legend($("#lg-flows"), FS);
+  lineChart($("#ch-flows"), FS, { height: 220, yfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "조", endLabels: true,
+    refs: [{ y: 0, label: "0" }], aria: "투자자별 20일 누적 순매수" });
+}
 function renderPaper() {
   const P = D.paper.portfolios;
   table($("#paper-table"), [
@@ -556,7 +605,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { overview: () => { renderTiles(); renderStatus(); }, market: () => renderMarket(), paper: () => renderPaper(),
+const RENDER = { overview: () => { renderTiles(); renderStatus(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "overview";
 function showTab(name) {
@@ -580,7 +629,7 @@ function seg(host, items, get, set) {
     set(b.dataset.v); host.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
   }));
 }
-seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); });
+seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderRegime(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
 $("#etf-q").addEventListener("input", renderEtf);
