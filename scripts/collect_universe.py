@@ -114,6 +114,21 @@ def do_update(log, markets: list[str]) -> int:
     return rc
 
 
+def do_etf_refresh(log, days: int) -> int:
+    """최근 days 거래일의 ETF 스냅샷을 전 종목으로 다시 받는다 (예전 파일은 벤치 4종목만 있었다)."""
+    cal = krx_daily.saved_days(krx_daily.CALENDAR_DS)[-days:]
+    stats = {"saved": 0, "holiday": 0, "missing": 0, "exists": 0}
+    for i, d in enumerate(cal, 1):
+        try:
+            stats[krx_daily.collect_day("etf", d, force=True)] += 1
+        except krx_api.QuotaExceeded as e:
+            log.warning("%s", e)
+            return 2
+        if i % 50 == 0 or i == len(cal):
+            log.info("[etf 전 종목] %d/%d %s %s", i, len(cal), f"{d:%Y-%m-%d}", stats)
+    return 0
+
+
 def do_status(log) -> int:
     m = membership.load_membership()
     members = membership.all_members(m)
@@ -163,6 +178,7 @@ def main(argv=None) -> int:
     ap.add_argument("--bench", action="store_true", help="벤치마크만 재구성")
     ap.add_argument("--rebuild", action="store_true", help="API 호출 없이 스냅샷으로 재구성만")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--etf-refresh", type=int, default=0, metavar="N", help="최근 N 거래일 ETF 스냅샷을 전 종목으로 다시 받기")
     ap.add_argument("--start", default="2016-01-01")
     ap.add_argument("--end", default=None)
     ap.add_argument("--period", default="10y")
@@ -185,9 +201,11 @@ def main(argv=None) -> int:
         rebuild(log, a.markets)
     elif a.bench and not (a.backfill or a.update):
         log.info("벤치마크: %s", krx_daily.build_bench())
+    if a.etf_refresh:
+        rc |= do_etf_refresh(log, a.etf_refresh)
     if a.status:
         rc |= do_status(log)
-    if not any([a.check, a.membership, a.backfill, a.update, a.bench, a.rebuild, a.status]):
+    if not any([a.check, a.membership, a.backfill, a.update, a.bench, a.rebuild, a.status, a.etf_refresh]):
         ap.print_help()
     return rc
 

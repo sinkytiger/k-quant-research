@@ -34,7 +34,8 @@ BENCH_SOURCES = {
     "KOSPI": ("idx_kospi", "IDX_NM", "코스피"),
     "KOSPI200": ("idx_kospi", "IDX_NM", "코스피200"),
 }
-ETF_KEEP = {"069500", "102110", "229200", "232080"}  # ETF 는 벤치 후보만 저장(용량)
+# ETF 는 전 종목 저장(ETF 탭: 성과·자금 흐름). 2026-10-01 이전 파일은 벤치 후보 4종목만 있을 수 있다.
+ETF_BENCH = {"069500", "102110", "229200", "232080"}
 
 
 def root() -> Path:
@@ -86,7 +87,7 @@ def has_prices(ds: str, rows: list[dict]) -> bool:
     return any(str(r.get(f, "")).replace(",", "").strip() not in ("", "-", "0") for r in rows)
 
 
-def collect_day(ds: str, day) -> str:
+def collect_day(ds: str, day, force: bool = False) -> str:
     """'saved' | 'holiday' | 'missing' | 'exists'. 한도 초과는 QuotaExceeded 로 올라간다.
 
     휴장일 기록은 CALENDAR_DS 가 비었을 때만 한다. 다른 데이터셋이 비면 'missing' 으로 두고
@@ -94,7 +95,7 @@ def collect_day(ds: str, day) -> str:
     """
     day = pd.Timestamp(day)
     p = snap_path(ds, day)
-    if p.exists():
+    if p.exists() and not force:
         return "exists"
     rows = krx_api.fetch(DATASETS[ds], f"{day:%Y%m%d}")
     if not has_prices(ds, rows):
@@ -105,8 +106,6 @@ def collect_day(ds: str, day) -> str:
             add_holiday(day)
         return "holiday"
     df = pd.DataFrame(rows)
-    if ds == "etf":
-        df = df[df["ISU_CD"].isin(ETF_KEEP)]
     p.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(p, index=False, encoding="utf-8-sig")
     return "saved"

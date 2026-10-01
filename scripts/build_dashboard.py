@@ -205,6 +205,26 @@ def research() -> dict:
             "backtest": backtest}
 
 
+def etf_section(log) -> dict:
+    """ETF 성과표·자금 흐름 (전 종목 스냅샷이 있는 구간)."""
+    from src import etf
+
+    tidy = etf.load_tidy(start=pd.Timestamp.today() - pd.DateOffset(days=560))
+    sm = etf.summary(tidy)
+    if sm.empty:
+        return {"rows": []}
+    n_days = tidy["Date"].nunique()
+    full_from = tidy.groupby("Date")["code"].nunique()
+    full_from = full_from[full_from > 100].index.min()
+    keep = ["code", "name", "category", "aum", "value_20d", "ret_1w", "ret_1m", "ret_3m", "ret_ytd", "ret_1y",
+            "flow_1w", "flow_1m", "flow_3m", "flow_1m_pct"]
+    rows = sm[[c for c in keep if c in sm]].to_dict("records")
+    log.info("ETF %d종목 (%s, 전 종목 스냅샷 %s~, %d일)", len(rows), f"{sm.attrs['asof']:%Y-%m-%d}",
+             f"{full_from:%Y-%m-%d}" if pd.notna(full_from) else "-", n_days)
+    return {"asof": f"{sm.attrs['asof']:%Y-%m-%d}", "full_from": f"{full_from:%Y-%m-%d}" if pd.notna(full_from) else None,
+            "rows": rows}
+
+
 def monitor(log) -> dict:
     """현재 유니버스 종목의 최신 피처. 투자 권유가 아니라 연구 신호 표시."""
     sys.path.insert(0, str(config.ROOT / "scripts"))
@@ -239,7 +259,7 @@ def monitor(log) -> dict:
 def main(argv=None) -> int:
     log = cli.setup("build_dashboard")
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
-            "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log)}
+            "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log)}
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)

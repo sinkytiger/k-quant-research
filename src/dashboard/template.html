@@ -109,6 +109,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
   <nav class="tabs" role="tablist" aria-label="대시보드 영역">
     <button role="tab" data-tab="overview" aria-controls="s-overview">개요</button>
     <button role="tab" data-tab="market" aria-controls="s-market">시장</button>
+    <button role="tab" data-tab="etf" aria-controls="s-etf">ETF</button>
     <button role="tab" data-tab="paper" aria-controls="s-paper">페이퍼</button>
     <button role="tab" data-tab="research" aria-controls="s-research">연구</button>
     <button role="tab" data-tab="monitor" aria-controls="s-monitor">모니터</button>
@@ -138,6 +139,29 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="sub">KOSPI200 가격지수 고점 대비 낙폭</div>
       <div class="chart" id="ch-dd"></div>
       <details><summary>표로 보기 (월말)</summary><div class="scroll" id="tb-market"></div></details>
+    </div>
+  </section>
+
+  <section id="s-etf" role="tabpanel" data-tab="etf">
+    <div class="row" style="justify-content: space-between">
+      <div>
+        <h2>ETF 성과·자금 흐름</h2>
+        <div class="sub" id="etf-sub"></div>
+      </div>
+      <input class="search" id="etf-q" placeholder="ETF 이름·코드 검색" aria-label="ETF 검색">
+    </div>
+    <div class="row" style="margin-top: 10px; gap: 16px">
+      <div class="seg row" id="etf-cat" role="group" aria-label="분류"></div>
+      <div class="seg row" id="etf-aum" role="group" aria-label="순자산"></div>
+    </div>
+    <div class="card">
+      <div class="sub">최근 1개월 자금 유입·유출 상위 10 (설정·환매, 억원)</div>
+      <div class="chart" id="ch-etf-flow"></div>
+    </div>
+    <div class="card scroll"><table id="etf-table"></table>
+      <button class="theme-btn" id="etf-more" type="button" style="margin-top:8px"></button>
+      <div class="note">수익률 = 시장가 기준 분배금 포함(전일대비가 기준가 대비라 분배락이 반영된다). 자금 흐름 = 상장주식수 변화 × NAV (설정은 +, 환매는 −).
+        레버리지·인버스는 매일 재조정되어 기간 수익률이 기초지수 배수와 다르다. 기간이 상장일보다 길면 비운다. 투자 권유가 아니다.</div>
     </div>
   </section>
 
@@ -306,10 +330,11 @@ function legend(host, series) {
 /* ---------- 가로 막대 (발산: 양수 파랑, 음수 빨강) ---------- */
 function divergingBars(host, rows, opt = {}) {
   host.innerHTML = "";
-  const W = host.clientWidth || 800, rowH = 26, m = { l: 110, r: 56, t: 18, b: 22 };
+  const W = host.clientWidth || 800, rowH = 26, m = { l: opt.labelW || 110, r: 64, t: 18, b: 22 };
   const H = m.t + m.b + rows.length * rowH;
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opt.aria || "" }, host);
-  const lim = Math.max(3.5, ...rows.map((r) => Math.abs(r.value))) * 1.08;
+  const lim = Math.max(opt.minLim ?? 3.5, ...rows.map((r) => Math.abs(r.value))) * 1.08;
+  const vfmt = opt.vfmt || ((v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2));
   const X = (v) => m.l + (v + lim) / (2 * lim) * (W - m.l - m.r);
   for (const v of opt.refs || []) {
     el("line", { x1: X(v), x2: X(v), y1: m.t - 6, y2: H - m.b, stroke: css("--grid"), "stroke-width": 1 }, svg);
@@ -323,7 +348,7 @@ function divergingBars(host, rows, opt = {}) {
     const lab = el("text", { x: m.l - 8, y: y + h / 2 + 4, "text-anchor": "end", style: "fill: var(--text-secondary)" }, svg); lab.textContent = r.label;
     el("rect", { x: a, y, width: Math.max(1, b - a), height: h, rx: 3, fill: color }, svg);
     const vt = el("text", { x: r.value >= 0 ? b + 6 : a - 6, y: y + h / 2 + 4, "text-anchor": r.value >= 0 ? "start" : "end", style: "fill: var(--text-secondary)" }, svg);
-    vt.textContent = (r.value >= 0 ? "+" : "−") + Math.abs(r.value).toFixed(2);
+    vt.textContent = vfmt(r.value);
     const hit = el("rect", { x: m.l, y: y - 4, width: W - m.l - m.r, height: rowH, fill: "transparent" }, svg);
     hit.addEventListener("mousemove", (ev) => showTip(ev.clientX, ev.clientY, r.label, r.tip));
     hit.addEventListener("mouseleave", hideTip);
@@ -473,6 +498,42 @@ function renderResearch() {
     { key: "excess_t", label: "초과 t", num: true, fmt: (v) => v == null ? "–" : v.toFixed(2) },
   ], R.backtest);
 }
+let ETF_CAT = "전체", ETF_AUM = 100, ETF_ALL = false;
+const ETF_CATS = ["전체", "국내 주식", "해외 주식", "채권·금리", "원자재", "레버리지·인버스"];
+function renderEtf() {
+  const E = D.etf || { rows: [] };
+  const eok = (v) => v == null ? "–" : Math.round(v / 1e8).toLocaleString("ko-KR");
+  const sEok = (v) => v == null ? "–" : (v >= 0 ? "+" : "−") + Math.abs(Math.round(v / 1e8)).toLocaleString("ko-KR");
+  $("#etf-sub").textContent = E.rows.length
+    ? `${E.asof} 기준 · ${E.rows.length.toLocaleString("ko-KR")}개 · 전 종목 이력 ${E.full_from} 부터 · 머리글을 누르면 정렬`
+    : "ETF 데이터 없음";
+  const q = ($("#etf-q").value || "").trim();
+  let rows = E.rows.filter((r) => (ETF_CAT === "전체" || r.category === ETF_CAT) && (r.aum ?? 0) >= ETF_AUM * 1e8
+    && (!q || r.name.includes(q) || r.code.includes(q)));
+  const fl = rows.filter((r) => r.flow_1m != null).sort((a, b) => b.flow_1m - a.flow_1m);
+  const top = [...fl.slice(0, 10), ...fl.slice(-10).filter((r) => r.flow_1m < 0 && !fl.slice(0, 10).includes(r))];
+  divergingBars($("#ch-etf-flow"), top.map((r) => ({ label: r.name.length > 18 ? r.name.slice(0, 17) + "…" : r.name, value: r.flow_1m / 1e8,
+    tip: [{ label: "1개월 유입", value: sEok(r.flow_1m) + "억" }, { label: "순자산", value: eok(r.aum) + "억" },
+          { label: "1개월 수익률", value: fmtPct(r.ret_1m) }, { label: "분류", value: r.category }] })),
+    { minLim: 1, labelW: 190, vfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v)).toLocaleString("ko-KR"), aria: "ETF 자금 유입 상위" });
+  const more = $("#etf-more");
+  more.hidden = rows.length <= 40;
+  more.textContent = ETF_ALL ? "40개만 보기" : `전체 ${rows.length.toLocaleString("ko-KR")}개 보기`;
+  if (!ETF_ALL) rows = [...rows].sort((a, b) => (b.aum ?? 0) - (a.aum ?? 0)).slice(0, 40);
+  table($("#etf-table"), [
+    { key: "name", label: "ETF", html: (r) => `${esc(r.name)} <span class="muted">${r.code}</span>` },
+    { key: "category", label: "분류" },
+    { key: "aum", label: "순자산(억)", num: true, fmt: eok },
+    { key: "ret_1w", label: "1주", num: true, fmt: (v) => fmtPct(v) },
+    { key: "ret_1m", label: "1개월", num: true, fmt: (v) => fmtPct(v) },
+    { key: "ret_3m", label: "3개월", num: true, fmt: (v) => fmtPct(v) },
+    { key: "ret_ytd", label: "연초 대비", num: true, fmt: (v) => fmtPct(v) },
+    { key: "ret_1y", label: "1년", num: true, fmt: (v) => fmtPct(v) },
+    { key: "flow_1w", label: "유입 1주(억)", num: true, fmt: sEok },
+    { key: "flow_1m", label: "유입 1개월(억)", num: true, fmt: sEok },
+    { key: "flow_1m_pct", label: "1개월 유입/순자산", num: true, fmt: (v) => fmtPct(v) },
+  ], rows, { sortable: true, sortKey: "aum" });
+}
 function renderMonitor() {
   const M = D.monitor;
   $("#mon-sub").textContent = `${M.asof || "–"} 기준 · ${M.rows.length}종목 · 머리글을 누르면 정렬`;
@@ -496,7 +557,7 @@ function renderMonitor() {
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
 const RENDER = { overview: () => { renderTiles(); renderStatus(); }, market: () => renderMarket(), paper: () => renderPaper(),
-  research: () => renderResearch(), monitor: () => renderMonitor() };
+  research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "overview";
 function showTab(name) {
   if (!RENDER[name]) name = "overview";
@@ -522,6 +583,10 @@ function seg(host, items, get, set) {
 seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
+$("#etf-q").addEventListener("input", renderEtf);
+$("#etf-more").addEventListener("click", () => { ETF_ALL = !ETF_ALL; renderEtf(); });
+seg($("#etf-cat"), ETF_CATS.map((c) => [c, c]), () => ETF_CAT, (v) => { ETF_CAT = v; renderEtf(); });
+seg($("#etf-aum"), [[0, "순자산 전체"], [100, "100억 이상"], [1000, "1,000억 이상"]], () => ETF_AUM, (v) => { ETF_AUM = +v; renderEtf(); });
 $("#mon-more").addEventListener("click", () => { MON_ALL = !MON_ALL; renderMonitor(); });
 $("#theme").addEventListener("click", () => {
   const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
