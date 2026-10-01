@@ -201,8 +201,17 @@ def research() -> dict:
         ic = df.to_dict("records")
     bt = config.OUTPUTS / "backtest_insample.csv"
     backtest = pd.read_csv(bt).to_dict("records") if bt.exists() else []
+    by_year = []
+    fy = sorted(config.OUTPUTS.glob("ic_by_year_*.csv"))
+    if fy:
+        y = pd.read_csv(fy[-1], index_col=0, encoding="utf-8-sig")
+        for key, row in y.iterrows():
+            feat, h = str(key).split("|h")
+            for year, v in row.items():
+                if pd.notna(v):
+                    by_year.append({"feature": feat, "h": int(h), "year": int(year), "ic": float(v)})
     return {"ic": ic, "ic_file": f[-1].name if f else None, "ledger": ledger(), "div_curve": div_curve(),
-            "backtest": backtest}
+            "backtest": backtest, "ic_by_year": by_year}
 
 
 def regime_section(log) -> dict:
