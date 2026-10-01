@@ -10,7 +10,7 @@
   --page: #f9f9f7; --surface-1: #fcfcfb; --border: rgba(11,11,11,0.10);
   --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
   --grid: #e1e0d9; --axis: #c3c2b7;
-  --series-1: #2a78d6; --series-2: #eb6834;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
   --pos: #2a78d6; --neg: #e34948; --neutral: #f0efec;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b; --good-text: #006300;
   --fill-1: rgba(42,120,214,0.14);
@@ -21,7 +21,7 @@
     --page: #0d0d0d; --surface-1: #1a1a19; --border: rgba(255,255,255,0.10);
     --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
     --grid: #2c2c2a; --axis: #383835;
-    --series-1: #3987e5; --series-2: #d95926;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
     --pos: #3987e5; --neg: #e66767; --neutral: #383835; --good-text: #0ca30c;
     --fill-1: rgba(57,135,229,0.18);
   }
@@ -31,7 +31,7 @@
   --page: #0d0d0d; --surface-1: #1a1a19; --border: rgba(255,255,255,0.10);
   --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
   --grid: #2c2c2a; --axis: #383835;
-  --series-1: #3987e5; --series-2: #d95926;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
   --pos: #3987e5; --neg: #e66767; --neutral: #383835; --good-text: #0ca30c;
   --fill-1: rgba(57,135,229,0.18);
 }
@@ -88,6 +88,8 @@ nav.tabs button { font: inherit; font-size: 14px; padding: 10px 14px; border: 0;
 nav.tabs button[aria-selected="true"] { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--text-primary); }
 nav.tabs button:hover { color: var(--text-primary); }
 section[hidden] { display: none; }
+#ledger-table td:nth-child(3), #ledger-table td:nth-child(4) { white-space: normal; min-width: 180px; }
+td a { color: var(--series-1); text-decoration: none; } td a:hover { text-decoration: underline; }
 .note { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
@@ -151,9 +153,18 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
   </section>
 
   <section id="s-research" role="tabpanel" data-tab="research">
-    <div class="row" style="justify-content: space-between">
+    <h2>연구 기록</h2>
+    <div class="sub" id="ledger-sub"></div>
+    <div class="card scroll"><table id="ledger-table"></table>
+      <div class="note">모든 판정 기준은 실행 전에 커밋했다(문서 링크 = 공개 저장소). 결과를 보고 기준을 바꾸지 않는다.</div></div>
+    <div class="card">
+      <div class="sub">배당 상위 20% 백테스트 (인샘플, 총수익·비용 포함, 시작 = 100) — 지수는 이겼지만 유니버스 대비 t 1.11 로 불통과</div>
+      <div class="legend" id="lg-div"></div>
+      <div class="chart" id="ch-div"></div>
+    </div>
+    <div class="row" style="justify-content: space-between; margin-top: 24px">
       <div>
-        <h2>연구: 피처 IC (인샘플)</h2>
+        <h2>피처 IC (인샘플)</h2>
         <div class="sub" id="ic-sub"></div>
       </div>
       <div class="seg row" id="hsel" role="group" aria-label="지평"></div>
@@ -163,7 +174,6 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="chart" id="ch-ic"></div>
       <details><summary>표로 보기</summary><div class="scroll" id="tb-ic"></div></details>
     </div>
-    <div class="card scroll"><div class="sub" style="margin-bottom:6px">사전 등록 기록 (비교 기준 KODEX200 은 분배금 포함 총수익)</div><table id="prereg-table"></table></div>
     <div class="card scroll"><div class="sub" style="margin-bottom:6px">사전 고정 롱온리 백테스트 (인샘플, 비용 포함)</div><table id="bt-table"></table></div>
   </section>
 
@@ -439,14 +449,24 @@ function renderResearch() {
     { key: "mean_ic", label: "평균 IC", num: true, fmt: (v) => v.toFixed(4) }, { key: "nw_t", label: "NW t", num: true, fmt: (v) => v.toFixed(2) },
     { key: "hit", label: "양(+) 비율", num: true, fmt: (v) => (v * 100).toFixed(1) + "%" }, { key: "days", label: "일수", num: true }],
     R.ic.filter((r) => r.h === H_SEL));
-  table($("#prereg-table"), [
-    { key: "id", label: "ID" },
-    { key: "w", label: "인샘플 구간", fmt: (_, r) => (r.window || []).join(" ~ ") },
-    { key: "s", label: "전략 누적", num: true, fmt: (_, r) => fmtPct(r.strategy?.total) },
-    { key: "b", label: "KODEX200", num: true, fmt: (_, r) => fmtPct(r.bench?.total) },
-    { key: "p", label: "결과", html: (r) => r.insample_pass ? status("good", "인샘플 통과") : status("serious", "인샘플 불통과 · 폐기") },
-    { key: "h", label: "홀드아웃", fmt: (_, r) => r.holdout_used ? "사용함" : "미사용" },
-  ], R.prereg);
+  const L = R.ledger || [];
+  const nPass = L.filter((r) => r.status === "pass").length, nHold = L.filter((r) => r.holdout).length;
+  $("#ledger-sub").textContent = `사전 등록 ${L.length}건 · 인샘플 통과 ${nPass}건 · 홀드아웃 사용 ${nHold}건 · 인샘플 2016~2025-09, 홀드아웃 2025-09-30~`;
+  table($("#ledger-table"), [
+    { key: "date", label: "날짜" },
+    { key: "id", label: "ID", html: (r) => r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.id)}</a>` : esc(r.id) },
+    { key: "hypothesis", label: "가설" },
+    { key: "metric", label: "핵심 수치" },
+    { key: "status", label: "판정", html: (r) => r.status === "pass"
+        ? (r.id === "div_sig_v1" ? status("good", "통과 · 백테스트와 묶음") : status("good", "통과"))
+        : status("serious", "불통과 · 폐기") },
+    { key: "holdout", label: "홀드아웃", fmt: (v) => v ? "사용함" : "미사용" },
+  ], L);
+  const DC = R.div_curve || {};
+  const DS = [["A_ew", "--series-1", "배당 상위 20%"], ["U_cw", "--series-2", "유니버스 시총가중"], ["KODEX200", "--series-3", "KODEX200"]]
+    .filter(([k]) => DC[k]).map(([k, v, short]) => ({ name: DC[k].name, short, color: css(v), points: DC[k].points }));
+  legend($("#lg-div"), DS);
+  lineChart($("#ch-div"), DS, { yfmt: (v) => v.toFixed(0), endLabels: true, height: 240, aria: "배당 백테스트 누적" });
   table($("#bt-table"), [
     { key: "strategy", label: "전략" }, { key: "rebal", label: "리밸런싱", num: true, fmt: (v) => v ? v + "일" : "–" },
     { key: "CAGR", label: "CAGR", num: true, fmt: (v) => fmtPct(v) }, { key: "MDD", label: "MDD", num: true, fmt: (v) => fmtPct(v) },

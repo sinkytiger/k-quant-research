@@ -111,25 +111,98 @@ def paper_section() -> dict:
     return {"portfolios": ports}
 
 
+DOC_URL = "https://github.com/sinkytiger/k-quant-research/blob/main/docs/prereg/"
+
+
+def _j(name: str) -> dict | None:
+    f = config.OUTPUTS / name
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+
+
+def _best(tests: list[dict], tkey: str, label_keys: tuple[str, str]) -> dict:
+    return max(tests, key=lambda t: abs(t.get(tkey) or 0)) if tests else {}
+
+
+def ledger() -> list[dict]:
+    """사전 등록 기록. 결과 파일마다 구조가 달라서 등록별로 요약한다."""
+    rows = []
+    bt = config.OUTPUTS / "backtest_insample.csv"
+    if bt.exists():
+        d = pd.read_csv(bt)
+        lose = d["excess_t"].dropna()
+        rows.append({"date": "09-28", "id": "롱온리 v0", "doc": None,
+                     "hypothesis": "저변동성·수급 피처 상위 20% 롱온리 (4개 변형)",
+                     "metric": f"동일가중 대비 초과 t {lose.min():+.2f} ~ {lose.max():+.2f}",
+                     "status": "fail", "holdout": False})
+    r = _j("prereg_capw_exvol_v1_insample.json")
+    if r:
+        rows.append({"date": "09-28", "id": "capw_exvol_v1", "doc": "2026-09-28_capw_exclude_highvol.md",
+                     "hypothesis": "시총가중 − 고변동 20% 제외",
+                     "metric": f"누적 {r['A_strategy']['total']:+.1%} vs KODEX200 {r['C_kodex200']['total']:+.1%} · 제외 효과 t {r['A_minus_B']['excess_t']:+.2f}",
+                     "status": "pass" if r.get("pass") else "fail"})
+    r = _j("prereg_voltarget_v1_insample.json")
+    if r:
+        a, c = r["A_voltarget"], r["C_kodex200"]
+        rows.append({"date": "09-28", "id": "voltarget_v1", "doc": "2026-09-28_voltarget_kodex200.md",
+                     "hypothesis": "KODEX200 변동성 타게팅 (0.15 / σ20)",
+                     "metric": f"MDD {a['MDD']:.1%} (기준 {0.75 * c['MDD']:.1%} 이내) · CAGR {a['CAGR']:.1%} vs {c['CAGR']:.1%}",
+                     "status": "pass" if r.get("pass") else "fail"})
+    r = _j("prereg_news_sent_v1_explore.json")
+    if r:
+        b = _best(r["tests"], "ctrl_nw_t", ("feature", "h"))
+        rows.append({"date": "09-29", "id": "news_sent_v1", "doc": "2026-09-29_news_sentiment.md",
+                     "hypothesis": "뉴스 제목 감성 (시황 기사 제외, 5일 수익률 통제)",
+                     "metric": f"최고 {b.get('feature')} {b.get('h')}일 t {b.get('ctrl_nw_t', 0):+.2f} (기준 2.64)",
+                     "status": "pass" if r.get("to_holdout") else "fail"})
+    r = _j("prereg_dart_events_v1_insample.json")
+    if r:
+        b = _best(r["tests"], "nw_t", ("event", "h"))
+        rows.append({"date": "09-30", "id": "dart_events_v1", "doc": "2026-09-30_dart_events.md",
+                     "hypothesis": "공시 이벤트 (자사주 취득·유상증자·공급계약)",
+                     "metric": f"최고 {b.get('event')} {b.get('h')}일 t {b.get('nw_t', 0):+.2f} (기준 2.64) · 반응은 진입 전에 끝남",
+                     "status": "pass" if r.get("to_holdout") else "fail"})
+    r = _j("prereg_div_sig_v1_insample.json")
+    if r:
+        dy = {t["h"]: t["nw_t"] for t in r["tests"] if t["feature"] == "dy_ttm"}
+        rows.append({"date": "09-30", "id": "div_sig_v1", "doc": "2026-09-30_dividend_signals.md",
+                     "hypothesis": "배당수익률 IC (총수익 라벨)",
+                     "metric": f"dy_ttm 20일 t {dy.get(20, 0):+.2f} · 60일 t {dy.get(60, 0):+.2f} (기준 2.50)",
+                     "status": "pass" if r.get("to_holdout") else "fail"})
+    r = _j("prereg_div_bt_v1_insample.json")
+    if r:
+        a, k = r["stats"]["A_ew"], r["stats"]["KODEX200"]
+        t = r["strategies"]["A_ew"]["vs_universe"]["excess_t"]
+        rows.append({"date": "09-30", "id": "div_bt_v1", "doc": "2026-09-30_dividend_backtest.md",
+                     "hypothesis": "배당 상위 20% 롱온리 (총수익·비용)",
+                     "metric": f"동일가중 CAGR {a['CAGR']:.1%} vs KODEX200 {k['CAGR']:.1%} · 유니버스 대비 t {t:+.2f} (기준 2.24)",
+                     "status": "pass" if r.get("passed") else "fail"})
+    for row in rows:
+        if "holdout" not in row:
+            pid = row["id"]
+            row["holdout"] = (config.OUTPUTS / f"prereg_{pid}_holdout.json").exists()
+        row["url"] = DOC_URL + row["doc"] if row.get("doc") else None
+    return rows
+
+
+def div_curve() -> dict:
+    f = config.OUTPUTS / "prereg_div_bt_v1_insample_daily.csv"
+    if not f.exists():
+        return {}
+    d = pd.read_csv(f, index_col=0, parse_dates=True)
+    names = {"A_ew": "배당 상위 20% 동일가중", "U_cw": "유니버스 시총가중", "KODEX200": "KODEX200"}
+    return {k: {"name": v, "points": series_points((1 + d[k]).cumprod() * 100)} for k, v in names.items() if k in d}
+
+
 def research() -> dict:
     ic = []
     f = sorted(config.OUTPUTS.glob("ic_summary_*.csv"))
     if f:
         df = pd.read_csv(f[-1])
         ic = df.to_dict("records")
-    prereg = []
-    for p in sorted(config.OUTPUTS.glob("prereg_*_insample.json")):
-        r = json.loads(p.read_text(encoding="utf-8"))
-        pid = p.stem.replace("prereg_", "").replace("_insample", "")
-        hold = config.OUTPUTS / f"prereg_{pid}_holdout.json"
-        strat = r.get("A_strategy") or r.get("A_voltarget") or {}
-        bench = r.get("C_kodex200") or {}
-        passed = r.get("pass") if "pass" in r else (strat.get("total", 0) >= bench.get("total", 0))
-        prereg.append({"id": pid, "window": r.get("window"), "strategy": strat, "bench": bench,
-                       "insample_pass": bool(passed), "holdout_used": hold.exists()})
     bt = config.OUTPUTS / "backtest_insample.csv"
     backtest = pd.read_csv(bt).to_dict("records") if bt.exists() else []
-    return {"ic": ic, "ic_file": f[-1].name if f else None, "prereg": prereg, "backtest": backtest}
+    return {"ic": ic, "ic_file": f[-1].name if f else None, "ledger": ledger(), "div_curve": div_curve(),
+            "backtest": backtest}
 
 
 def monitor(log) -> dict:
