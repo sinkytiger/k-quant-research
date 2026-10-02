@@ -26,6 +26,7 @@ DATASETS = {
     "stk": krx_api.STOCK_KOSPI,
     "ksq": krx_api.STOCK_KOSDAQ,
     "idx_kospi": krx_api.INDEX_KOSPI,
+    "idx_kosdaq": krx_api.INDEX_KOSDAQ,
     "etf": krx_api.ETF,
 }
 # 벤치마크: (파일명, 데이터셋, 식별 열, 값)
@@ -77,7 +78,8 @@ def candidate_days(start, end) -> list[pd.Timestamp]:
     return [d for d in pd.bdate_range(start, end) if d not in hol]
 
 
-CLOSE_FIELD = {"stk": "TDD_CLSPRC", "ksq": "TDD_CLSPRC", "etf": "TDD_CLSPRC", "idx_kospi": "CLSPRC_IDX"}
+CLOSE_FIELD = {"stk": "TDD_CLSPRC", "ksq": "TDD_CLSPRC", "etf": "TDD_CLSPRC", "idx_kospi": "CLSPRC_IDX",
+               "idx_kosdaq": "CLSPRC_IDX"}
 CALENDAR_DS = "stk"  # 휴장일 판정은 유가증권 일별매매로만 한다
 
 

@@ -96,7 +96,7 @@ def rebuild(log, markets: list[str] | None = None) -> None:
 def do_backfill(log, period: str, markets: list[str]) -> int:
     start = cli.parse_period(period)
     end = pd.Timestamp.today().normalize()
-    rc = collect_snapshots(log, markets + ["idx_kospi", "etf"], start, end)
+    rc = collect_snapshots(log, markets + ["idx_kospi", "idx_kosdaq", "etf"], start, end)
     rebuild(log, markets)
     do_membership(log, "2016-01-01", None)
     if rc == 2:
@@ -108,7 +108,7 @@ def do_update(log, markets: list[str]) -> int:
     last = krx_daily.saved_days("stk")
     start = (last[-1] + pd.Timedelta(days=1)) if last else cli.parse_period("10y")
     end = pd.Timestamp.today().normalize()
-    rc = collect_snapshots(log, markets + ["idx_kospi", "etf"], start, end)
+    rc = collect_snapshots(log, markets + ["idx_kospi", "idx_kosdaq", "etf"], start, end)
     rebuild(log, markets)
     do_membership(log, "2016-01-01", None)
     return rc

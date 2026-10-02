@@ -24,6 +24,7 @@ MIN_INTERVAL = 0.1
 STOCK_KOSPI = "sto/stk_bydd_trd"
 STOCK_KOSDAQ = "sto/ksq_bydd_trd"
 INDEX_KOSPI = "idx/kospi_dd_trd"
+INDEX_KOSDAQ = "idx/kosdaq_dd_trd"
 ETF = "etp/etf_bydd_trd"
 
 _last = 0.0

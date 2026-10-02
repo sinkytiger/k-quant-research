@@ -20,6 +20,8 @@ echo [universe] exit %errorlevel% >> "%LOG%"
 echo [flows] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\collect_news.py --update >> "%LOG%" 2>&1
 echo [news] exit %errorlevel% >> "%LOG%"
+"%PY%" scripts\collect_market_extra.py >> "%LOG%" 2>&1
+echo [market_extra] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\paper_track.py --update --report >> "%LOG%" 2>&1
 echo [paper] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\build_dashboard.py >> "%LOG%" 2>&1

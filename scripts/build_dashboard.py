@@ -214,6 +214,110 @@ def research() -> dict:
             "backtest": backtest, "ic_by_year": by_year}
 
 
+def _card(name: str, close: pd.Series, n: int = 120, extra: dict | None = None) -> dict:
+    c = close.dropna()
+    if len(c) < 2:
+        return {}
+    last, prev = float(c.iloc[-1]), float(c.iloc[-2])
+    return {"name": name, "asof": f"{c.index[-1]:%Y-%m-%d}", "last": last, "chg": last - prev,
+            "pct": last / prev - 1, "spark": [round(float(v), 4) for v in c.tail(n)], **(extra or {})}
+
+
+def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
+    """홈 탭: 시장 카드, 순위표, 고른 종목 캔들, 다가오는 배당 일정 (전 거래일 종가 기준)."""
+    from src.data import dividends, market_extra as mx
+
+    cards = []
+    for mkt, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
+        inv = mx.load_investor(mkt)
+        if len(inv):
+            last = inv.iloc[-1]
+            cards.append(_card(label, inv["index"], extra={"investor": {k: float(last[k]) for k in ("개인", "외국인", "기관")},
+                                                           "big": mkt == "KOSPI"}))
+    k200 = prices.load_bench("KOSPI200")
+    if len(k200):
+        cards.append(_card("코스피 200", k200["Close"]))
+    for name, (_, _, label) in mx.GLOBAL.items():
+        g = mx.load_global(name)
+        if len(g):
+            cards.append(_card(label, g["Close"], extra={"global": True}))
+
+    # 순위표: 최신 일별매매 스냅샷 (코스피·코스닥·ETF)
+    rows = []
+    for ds, mk in (("stk", "코스피"), ("ksq", "코스닥"), ("etf", "ETF")):
+        days = krx_daily.saved_days(ds)
+        if not days:
+            continue
+        raw = krx_daily.load_snapshots(ds, start=days[-1])
+        for r in raw.itertuples():
+            close, chg = pd.to_numeric(str(r.TDD_CLSPRC).replace(",", ""), errors="coerce"), \
+                pd.to_numeric(str(r.CMPPREVDD_PRC).replace(",", ""), errors="coerce")
+            if not close or pd.isna(close) or close <= 0:
+                continue
+            base = close - (chg if pd.notna(chg) else 0)
+            rows.append({"code": str(r.ISU_CD), "name": str(r.ISU_NM), "market": mk, "close": float(close),
+                         "pct": float(close / base - 1) if base > 0 else 0.0,
+                         "value": float(pd.to_numeric(str(r.ACC_TRDVAL).replace(",", ""), errors="coerce") or 0),
+                         "volume": float(pd.to_numeric(str(r.ACC_TRDVOL).replace(",", ""), errors="coerce") or 0),
+                         "mcap": float(pd.to_numeric(str(r.MKTCAP).replace(",", ""), errors="coerce") or 0),
+                         "asof": f"{days[-1]:%Y-%m-%d}"})
+    R = pd.DataFrame(rows)
+    # 외국인·기관 순매수 (유니버스 종목, KIS 수급 최신일)
+    cur = sorted(membership.current_members())
+    fr = flows.flow_panel(cur, "외국인합계")
+    ins = flows.flow_panel(cur, "기관합계")
+    flow_day = fr.index.max() if len(fr) else None
+    net = pd.DataFrame({"frgn": fr.loc[flow_day] if flow_day is not None else pd.Series(dtype=float),
+                        "inst": ins.loc[flow_day] if flow_day is not None else pd.Series(dtype=float)})
+    R = R.merge(net, left_on="code", right_index=True, how="left")
+    lists = {}
+    active = R[R["volume"] > 0]
+    for mk in ("전체", "코스피", "코스닥", "ETF"):
+        sub = active if mk == "전체" else active[active["market"] == mk]
+        lists[mk] = {"value": list(sub.nlargest(top, "value")["code"]), "volume": list(sub.nlargest(top, "volume")["code"]),
+                     "up": list(sub.nlargest(top, "pct")["code"]), "down": list(sub.nsmallest(top, "pct")["code"]),
+                     "mcap": list(sub.nlargest(top, "mcap")["code"]),
+                     "frgn": list(sub.dropna(subset=["frgn"]).nlargest(top, "frgn")["code"]),
+                     "inst": list(sub.dropna(subset=["inst"]).nlargest(top, "inst")["code"])}
+    used = sorted({c for d in lists.values() for v in d.values() for c in v})
+    R = R[R["code"].isin(used)].drop_duplicates("code")
+
+    # 캔들: 주식은 수정주가 파일, ETF 는 스냅샷 원시가
+    candles = {}
+    etf_codes = set(R.loc[R["market"] == "ETF", "code"])
+    if etf_codes:
+        ed = krx_daily.saved_days("etf")[-candle_days:]
+        eraw = krx_daily.load_snapshots("etf", start=ed[0])
+        eraw = eraw[eraw["ISU_CD"].isin(etf_codes)]
+        for code, g in eraw.groupby("ISU_CD"):
+            g = g.sort_values("BAS_DD")
+            num = lambda col: pd.to_numeric(g[col].astype(str).str.replace(",", ""), errors="coerce")  # noqa: E731
+            candles[code] = [[d[2:], o, h, l, c, v] for d, o, h, l, c, v in
+                             zip(g["BAS_DD"], num("TDD_OPNPRC"), num("TDD_HGPRC"), num("TDD_LWPRC"), num("TDD_CLSPRC"), num("ACC_TRDVOL"))
+                             if c and c > 0]
+    for code in R.loc[R["market"] != "ETF", "code"]:
+        df = prices.load(code).tail(candle_days)
+        candles[code] = [[f"{d:%y%m%d}", round(o, 2) if o == o else None, round(h, 2) if h == h else None,
+                          round(l, 2) if l == l else None, round(c, 2), int(v) if v == v else 0]
+                         for d, o, h, l, c, v in zip(df.index, df["Open"], df["High"], df["Low"], df["Close"], df["Volume"])]
+
+    # 최근·다가오는 배당 (유니버스, 기준일 −30일 ~ +120일). 연말 배당은 보통 11~12월에 공시돼야 나타난다
+    today = pd.Timestamp.today().normalize()
+    names = membership.load_names()
+    upcoming = []
+    for c in cur:
+        d = dividends.load(c)
+        d = d[(d["record_date"] >= today - pd.Timedelta(days=30)) & (d["record_date"] <= today + pd.Timedelta(days=120))]
+        for r in d.itertuples():
+            upcoming.append({"date": f"{r.record_date:%Y-%m-%d}", "name": names.get(c, c), "code": c,
+                             "dps": float(r.dps), "kind": r.kind})
+    upcoming = sorted(upcoming, key=lambda x: x["date"], reverse=True)[:10]
+    log.info("홈: 카드 %d, 순위 종목 %d, 캔들 %d, 배당 일정 %d", len(cards), len(R), len(candles), len(upcoming))
+    return {"cards": [c for c in cards if c], "rows": R.where(R.notna(), None).to_dict("records"), "lists": lists,
+            "candles": candles, "flow_day": f"{flow_day:%Y-%m-%d}" if flow_day is not None else None,
+            "upcoming": upcoming}
+
+
 def quality_section(log, window: int = 60) -> dict:
     """데이터 품질 점검 (최근 window 거래일). 심각도: critical > serious > warning > info."""
     from src import quality as q
@@ -343,7 +447,7 @@ def main(argv=None) -> int:
     log = cli.setup("build_dashboard")
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
             "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
-            "regime": regime_section(log), "quality": quality_section(log)}
+            "regime": regime_section(log), "quality": quality_section(log), "home": home_section(log)}
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)
