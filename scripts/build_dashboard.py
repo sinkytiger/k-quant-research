@@ -4,6 +4,7 @@
 
 run_daily.bat 마지막에 돈다. 데이터를 모아 JSON 으로 템플릿(src/dashboard/template.html)에 넣는다.
 섹션: 데이터 상태 · 시장(KOSPI200 가격지수 / KODEX200 총수익) · 페이퍼 · 연구(IC·사전등록) · 유니버스 모니터
+종목 상세는 종목마다 outputs/stocks/<코드>.js 로 따로 쓰고 화면에서 고를 때 불러온다 (src/stock_detail.py).
 """
 from __future__ import annotations
 
@@ -318,6 +319,46 @@ def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
             "upcoming": upcoming}
 
 
+def stocks_section(log, home: dict) -> dict:
+    """종목 상세: 현재 유니버스 + 홈 순위표에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
+    from src import stock_detail as sd
+    from src.data import dart, dividends, news
+
+    snap = {}
+    for ds, mk in (("ksq", "코스닥"), ("stk", "코스피")):  # 같은 코드면 코스피(나중)가 이긴다
+        days = krx_daily.saved_days(ds)
+        if not days:
+            continue
+        for r in krx_daily.load_snapshots(ds, start=days[-1]).itertuples():
+            snap[str(r.ISU_CD)] = {"name": str(r.ISU_NM), "market": mk, "mcap": krx_api.to_num(r.MKTCAP)}
+    cur = set(membership.current_members())
+    codes = sorted(cur | {r["code"] for r in home.get("rows", []) if r.get("market") != "ETF"})
+    names = membership.load_names()
+    dl = dart.load_all(start=pd.Timestamp.today().normalize() - pd.DateOffset(months=6))
+    dl = dl[dl["stock_code"].str.len() == 6]
+    by_code = dict(tuple(dl.groupby("stock_code")))
+    payloads, index = {}, []
+    for c in codes:
+        px = prices.load(c) if prices.price_path(c).exists() else pd.DataFrame()
+        if px.empty:
+            continue
+        info = snap.get(c, {"name": names.get(c, c), "market": "코스피", "mcap": None})
+        st = sd.price_stats(px["Close"])
+        asof = px.index[-1]
+        div = sd.dividend_block(dividends.load(c), st.get("close"), asof)
+        payloads[c] = {"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
+                       "asof": f"{asof:%Y-%m-%d}", "mcap": info["mcap"], "stats": st, "candles": sd.ohlcv(px),
+                       "flows": sd.flow_block(flows.load(c)), "news": sd.news_block(news.load(c)),
+                       "dart": sd.dart_block(by_code.get(c, pd.DataFrame())), "div": div}
+        index.append({"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
+                      "mcap": info["mcap"]})
+    n = sd.write_all(config.OUTPUTS / "stocks", clean(payloads))
+    log.info("종목 상세 %d종목 (새로 쓴 파일 %d개, 공시 %s~)", len(index), n,
+             f"{dl['rcept_dt'].min():%Y-%m-%d}" if len(dl) else "-")
+    return {"list": sorted(index, key=lambda x: -(x["mcap"] or 0)),
+            "dart_last": f"{dl['rcept_dt'].max():%Y-%m-%d}" if len(dl) else None}
+
+
 def quality_section(log, window: int = 60) -> dict:
     """데이터 품질 점검 (최근 window 거래일). 심각도: critical > serious > warning > info."""
     from src import quality as q
@@ -448,6 +489,7 @@ def main(argv=None) -> int:
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
             "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
             "regime": regime_section(log), "quality": quality_section(log), "home": home_section(log)}
+    data["stocks"] = stocks_section(log, data["home"])
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)
