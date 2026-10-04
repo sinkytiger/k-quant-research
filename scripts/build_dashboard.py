@@ -319,8 +319,50 @@ def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
             "upcoming": upcoming}
 
 
-def stocks_section(log, home: dict) -> dict:
-    """종목 상세: 현재 유니버스 + 홈 순위표에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
+def map_section(log, top: int = 300) -> dict:
+    """업종 지도: 시장별 시총 상위 top 보통주. 크기 = 시가총액, 색 = 기간 수익률 (수정주가)."""
+    from src.universe import kis_master
+
+    try:
+        sec = kis_master.sectors()
+    except Exception as e:  # noqa: BLE001
+        log.warning("업종 지도: KIS 업종 마스터 없음 (%s)", e)
+        return {}
+    out = {}
+    for ds, mk in (("stk", "코스피"), ("ksq", "코스닥")):
+        days = krx_daily.saved_days(ds)
+        if not days:
+            continue
+        raw = krx_daily.load_snapshots(ds, start=days[-1])
+        snap = pd.DataFrame({"code": raw["ISU_CD"].astype(str), "name": raw["ISU_NM"].astype(str),
+                             "mcap": raw["MKTCAP"].map(krx_api.to_num), "close": raw["TDD_CLSPRC"].map(krx_api.to_num),
+                             "chg": raw["CMPPREVDD_PRC"].map(krx_api.to_num)})
+        common = pd.Series([membership.is_common_stock(c, n) for c, n in zip(snap["code"], snap["name"])], index=snap.index)
+        snap = snap[common & (snap["close"] > 0)]
+        total = float(snap["mcap"].sum())
+        pick = snap.nlargest(top, "mcap")
+        asof = days[-1]
+        ytd0 = pd.Timestamp(year=asof.year, month=1, day=1)
+        rows = []
+        for r in pick.itertuples():
+            base = r.close - (r.chg if pd.notna(r.chg) else 0)
+            c = prices.load(r.code)["Close"].dropna() if prices.price_path(r.code).exists() else pd.Series(dtype=float)
+            c = c[c.index <= asof]
+
+            def ret(n, c=c):
+                return float(c.iloc[-1] / c.iloc[-n - 1] - 1) if len(c) > n else None
+            prev_year = c[c.index < ytd0]
+            rows.append({"code": r.code, "name": r.name, "sector": sec.get(r.code, "기타"), "mcap": float(r.mcap),
+                         "r1d": float(r.close / base - 1) if base > 0 else None, "r1w": ret(5), "r1m": ret(21),
+                         "rytd": float(c.iloc[-1] / prev_year.iloc[-1] - 1) if len(prev_year) and len(c) else None})
+        out[mk] = {"asof": f"{asof:%Y-%m-%d}", "coverage": float(pick["mcap"].sum()) / total if total else None,
+                   "n_all": int(len(snap)), "rows": rows}
+        log.info("업종 지도 %s: %d종목, 시총 %.1f%% (%s)", mk, len(rows), 100 * out[mk]["coverage"], f"{asof:%Y-%m-%d}")
+    return out
+
+
+def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
+    """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
     from src.data import dart, dividends, news
 
@@ -332,7 +374,7 @@ def stocks_section(log, home: dict) -> dict:
         for r in krx_daily.load_snapshots(ds, start=days[-1]).itertuples():
             snap[str(r.ISU_CD)] = {"name": str(r.ISU_NM), "market": mk, "mcap": krx_api.to_num(r.MKTCAP)}
     cur = set(membership.current_members())
-    codes = sorted(cur | {r["code"] for r in home.get("rows", []) if r.get("market") != "ETF"})
+    codes = sorted(cur | {r["code"] for r in home.get("rows", []) if r.get("market") != "ETF"} | (extra or set()))
     names = membership.load_names()
     dl = dart.load_all(start=pd.Timestamp.today().normalize() - pd.DateOffset(months=6))
     dl = dl[dl["stock_code"].str.len() == 6]
@@ -489,7 +531,8 @@ def main(argv=None) -> int:
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
             "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
             "regime": regime_section(log), "quality": quality_section(log), "home": home_section(log)}
-    data["stocks"] = stocks_section(log, data["home"])
+    data["map"] = map_section(log)
+    data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)

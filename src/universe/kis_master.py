@@ -86,3 +86,63 @@ def current_members(index: str) -> list[str]:
     mkt = "kosdaq" if col == "kosdaq150" else "kospi"
     df = load(mkt)
     return sorted(df.loc[df[col], "code"])
+
+
+# ---------------- 업종 (화면 표시용) ----------------
+IDX_URL = "https://new.real.download.dws.co.kr/common/master/idxcode.mst.zip"
+
+
+def _latest_cache(suffix: str) -> Path | None:
+    d = config.DATA / "raw" / "kis_master"
+    files = sorted(d.glob(f"*_{suffix}")) if d.exists() else []
+    return files[-1] if files else None
+
+
+def download_idxcode(force: bool = False) -> str:
+    """업종·지수 코드표 idxcode.mst (행 = [시장구분 1][코드 4][이름]). 오늘 것 재사용."""
+    p = config.DATA / "raw" / "kis_master" / f"{date.today():%Y%m%d}_idxcode.mst"
+    if p.exists() and not force:
+        return p.read_text(encoding="utf-8")
+    import requests
+
+    r = requests.get(IDX_URL, timeout=60)
+    r.raise_for_status()
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    text = z.read(z.namelist()[0]).decode("cp949")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    return text
+
+
+def parse_idxcode(text: str) -> dict[str, str]:
+    """'0' + 코스피 업종코드 / '1' + 코스닥 업종코드 → 이름."""
+    return {line[:5]: line[5:].strip() for line in text.splitlines() if len(line) > 5 and line[:5].isdigit()}
+
+
+def sector_label(row: dict, names: dict[str, str], prefix: str) -> str:
+    """업종 중분류가 있으면 중분류(예: 전기·전자), 없으면 대분류(예: IT 서비스)."""
+    for k in ("sector_m", "sector_l"):
+        v = str(row.get(k, "0000"))
+        if v.strip("0 ") and prefix + v in names:
+            return names[prefix + v]
+    return "기타"
+
+
+def sectors() -> dict[str, str]:
+    """종목코드 → 업종 이름 (코스피·코스닥 보통주 전체, 오늘 기준). 내려받기에 실패하면 가장 최근 캐시를 쓴다."""
+    def text_or_cache(fn, suffix):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001
+            p = _latest_cache(suffix)
+            if p is None:
+                raise
+            return p.read_text(encoding="utf-8")
+
+    names = parse_idxcode(text_or_cache(download_idxcode, "idxcode.mst"))
+    out = {}
+    for mkt, prefix in (("kosdaq", "1"), ("kospi", "0")):  # 같은 코드면 코스피가 이긴다
+        df = parse(text_or_cache(lambda m=mkt: download(m), f"{mkt}_code.mst"), mkt)
+        for r in df.to_dict("records"):
+            out[r["code"]] = sector_label(r, names, prefix)
+    return out
