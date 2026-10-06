@@ -24,6 +24,22 @@ def test_is_excluded():
     assert tr.is_excluded("주식왕", "매일 시황") is None
 
 
+def test_is_excluded_media():
+    assert tr.is_excluded("SBS Biz 뉴스") == "Biz"
+    assert tr.is_excluded("김어준의 겸손은힘들다 뉴스공장") == "뉴스공장"
+
+
+def test_topic_shares_and_rule():
+    titles = ["코스피 급락 이유", "이 종목 매수 타이밍", "엔비디아 실적", "오늘 점심 메뉴", None]
+    kr, fo = tr.topic_shares(titles)
+    assert kr == pytest.approx(2 / 4) and fo == pytest.approx(1 / 4)
+    assert tr.topic_ok(kr, fo)
+    assert not tr.topic_ok(0.39, 0.0)
+    assert not tr.topic_ok(0.5, 0.6)
+    assert tr.topic_shares([]) == (0.0, 0.0)
+    assert tr.topic_shares(["s&p500 전망"])[1] == 1.0
+
+
 def test_labels_are_deterministic_and_hide_order():
     ids = [f"UC{i:02d}" for i in range(10)]
     a, b = tr.assign_labels(ids), tr.assign_labels(list(reversed(ids)))

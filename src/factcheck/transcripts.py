@@ -28,7 +28,14 @@ API = "https://www.googleapis.com/youtube/v3"
 # 기획서 3.1
 SEARCH_QUERIES = ["주식", "주식투자", "증시", "국내주식", "종목추천", "시황"]
 SEARCH_PAGES = 3
-EXCLUDE_WORDS = ["증권", "자산운용", "투자증권", "거래소", "리딩", "유료방", "카톡방"]
+EXCLUDE_WORDS = ["증권", "자산운용", "투자증권", "거래소", "리딩", "유료방", "카톡방",
+                 "방송", "Biz", "경제TV", "한경", "매경", "머니투데이", "뉴스공장"]  # v1.2: 언론사 계열
+# v1.2 주제 기준: 구간 영상 제목에서 단어 포함 비율
+DOMESTIC_WORDS = ["주식", "종목", "코스피", "코스닥", "증시", "국장", "매수", "매도", "차트", "수급", "공시",
+                  "상한가", "하한가", "테마주", "급등주", "삼성전자", "하이닉스", "2차전지"]
+FOREIGN_WORDS = ["미국", "미장", "나스닥", "S&P", "다우", "뉴욕증시", "엔비디아", "테슬라", "애플", "팔란티어",
+                 "비트코인", "코인"]
+MIN_DOMESTIC_SHARE = 0.40
 MIN_VIDEOS = 50
 MIN_SECONDS = 180  # 3분 이하(쇼츠 포함)는 영상으로 세지 않는다
 N_CHANNELS = 10
@@ -86,6 +93,21 @@ def is_excluded(title: str, description: str = "") -> str | None:
     """기획서 3.1 규칙 3. 걸린 단어를 돌려준다."""
     text = f"{title} {description}"
     return next((w for w in EXCLUDE_WORDS if w in text), None)
+
+
+def topic_shares(titles) -> tuple[float, float]:
+    """(국내 주식 단어 포함 비율, 해외·코인 단어 포함 비율). 제목이 없으면 (0, 0)."""
+    ts = [str(t) for t in titles if isinstance(t, str) and t]
+    if not ts:
+        return 0.0, 0.0
+    kr = sum(any(w in t for w in DOMESTIC_WORDS) for t in ts) / len(ts)
+    fo = sum(any(w.lower() in t.lower() for w in FOREIGN_WORDS) for t in ts) / len(ts)
+    return kr, fo
+
+
+def topic_ok(kr: float, fo: float) -> bool:
+    """기획서 3.1 6단계: 국내 비율 40% 이상이고 해외 비율이 국내보다 낮음."""
+    return kr >= MIN_DOMESTIC_SHARE and fo < kr
 
 
 def assign_labels(channel_ids: list[str], seed: int = LABEL_SEED) -> dict[str, str]:
@@ -160,7 +182,7 @@ def list_videos(uploads: str, start: str, end: str) -> pd.DataFrame:
 
 
 def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | None = None) -> pd.DataFrame:
-    """4~5단계: 구독자 순으로 내려가며 수집 구간 영상(3분 초과) 50개 이상인 채널 10개.
+    """4~6단계: 구독자 순으로 내려가며 수집 구간 영상(3분 초과) 50개 이상이고 주제 기준을 넘는 채널 10개.
     manual_exclude = {channel_id: 사유} 는 기획서 3.1의 1회 수작업 제외."""
     manual_exclude = manual_exclude or {}
     picked, checked = [], []
@@ -172,9 +194,13 @@ def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | N
             continue
         vids = list_videos(row.uploads, *PERIOD)
         n = int(vids["in_period"].sum())
-        ok = n >= MIN_VIDEOS
-        checked.append({"channel_id": row.channel_id, "status": "picked" if ok else "too_few_videos", "n_videos": n})
-        log.info("%s 구독자 %s 구간 영상 %d → %s", row.title, row.subscribers, n, "선정" if ok else "탈락")
+        kr, fo = topic_shares(vids.loc[vids["in_period"], "title"])
+        status = ("too_few_videos" if n < MIN_VIDEOS else "off_topic" if not topic_ok(kr, fo) else "picked")
+        ok = status == "picked"
+        checked.append({"channel_id": row.channel_id, "title": row.title, "status": status, "n_videos": n,
+                        "domestic_share": round(kr, 3), "foreign_share": round(fo, 3)})
+        log.info("%s 구독자 %s 구간 영상 %d 국내 %.0f%% 해외 %.0f%% → %s",
+                 row.title, row.subscribers, n, kr * 100, fo * 100, status)
         if ok:
             picked.append(row._asdict())
             vids.to_csv(fc_dir() / "videos" / f"{row.channel_id}.csv", index=False, encoding="utf-8-sig")
