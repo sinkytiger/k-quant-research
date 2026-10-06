@@ -3,7 +3,8 @@
 gs-quant 를 런타임 의존성으로 두지 않는다. 설치하면 numpy 를 내려 다른 모듈을
 흔들기 때문이다. 대신 별도 가상환경(C:\\KQuantData\\venv-gsq)에 gs-quant 를 깔고
 tests/test_gsq_reference.py 로 값이 같은지 대조한다(그 환경에서만 돈다).
-2026-10-07 현재 대조 테스트는 아직 없다 — 정의는 gs-quant 문서 기준으로 맞췄고 값 대조는 다음 커밋.
+2026-10-07 gs-quant 2.1.18 과 대조 11건 일치(상대오차 1e-9, 베타 1e-7).
+그때 exponential_std 가 adjust=True 로 달라 있던 것을 gs-quant 와 같은 adjust=False 로 고쳤다.
 
 단위 규약 (gs-quant 와 같다)
 - returns: 단순수익률(비율)
@@ -47,8 +48,8 @@ def volatility(x: pd.Series, window: int | None = None, ramp: int | None = 0,
 
 
 def exponential_std(x: pd.Series, beta: float = 0.75) -> pd.Series:
-    """가중치 beta^k 지수가중 표준편차(편향 보정)."""
-    return x.ewm(alpha=1 - beta, adjust=True).std(bias=False)
+    """지수가중 표준편차(편향 보정). gs-quant 와 같이 adjust=False: 가중치 (1−β)β^i, 가장 오래된 관측만 β^t."""
+    return x.ewm(alpha=1 - beta, adjust=False).std(bias=False)
 
 
 def exponential_volatility(x: pd.Series, beta: float = 0.75, annualization: int = ANNUALIZATION) -> pd.Series:
