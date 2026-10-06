@@ -29,7 +29,8 @@ API = "https://www.googleapis.com/youtube/v3"
 SEARCH_QUERIES = ["주식", "주식투자", "증시", "국내주식", "종목추천", "시황"]
 SEARCH_PAGES = 3
 EXCLUDE_WORDS = ["증권", "자산운용", "투자증권", "거래소", "리딩", "유료방", "카톡방",
-                 "방송", "Biz", "경제TV", "한경", "매경", "머니투데이", "뉴스공장"]  # v1.2: 언론사 계열
+                 "방송", "Biz", "경제TV", "한경", "매경", "머니투데이", "뉴스공장",  # v1.2: 언론사 계열
+                 "뉴스", "NEWS", "KBS", "MBC", "SBS", "JTBC", "YTN", "MBN", "TV조선", "채널A"]  # v1.3
 # v1.2 주제 기준: 구간 영상 제목에서 단어 포함 비율
 DOMESTIC_WORDS = ["주식", "종목", "코스피", "코스닥", "증시", "국장", "매수", "매도", "차트", "수급", "공시",
                   "상한가", "하한가", "테마주", "급등주", "삼성전자", "하이닉스", "2차전지"]
@@ -37,6 +38,7 @@ FOREIGN_WORDS = ["미국", "미장", "나스닥", "S&P", "다우", "뉴욕증시
                  "비트코인", "코인"]
 MIN_DOMESTIC_SHARE = 0.40
 MIN_VIDEOS = 50
+MAX_VIDEOS = 3000  # v1.3: 구간 영상이 이보다 많으면(하루 8개 초과) 클립·언론사형으로 보고 목록 넘기기를 멈춤
 MIN_SECONDS = 180  # 3분 이하(쇼츠 포함)는 영상으로 세지 않는다
 N_CHANNELS = 10
 PERIOD = ("2025-10-01", "2026-09-30")
@@ -91,8 +93,8 @@ def parse_duration(iso: str | None) -> int | None:
 
 def is_excluded(title: str, description: str = "") -> str | None:
     """기획서 3.1 규칙 3. 걸린 단어를 돌려준다."""
-    text = f"{title} {description}"
-    return next((w for w in EXCLUDE_WORDS if w in text), None)
+    text = f"{title} {description}".lower()
+    return next((w for w in EXCLUDE_WORDS if w.lower() in text), None)
 
 
 def topic_shares(titles) -> tuple[float, float]:
@@ -149,13 +151,15 @@ def collect_candidates(log) -> pd.DataFrame:
                          "video_count": int(st.get("videoCount", 0)),
                          "uploads": it["contentDetails"]["relatedPlaylists"]["uploads"],
                          "queries": ",".join(seen[it["id"]]),
+                         "description": (sn.get("description") or "")[:500],
                          "excluded_by": is_excluded(sn.get("title", ""), sn.get("description", ""))})
     df = pd.DataFrame(rows).sort_values("subscribers", ascending=False, na_position="last")
     return df.reset_index(drop=True)
 
 
-def list_videos(uploads: str, start: str, end: str) -> pd.DataFrame:
-    """업로드 재생목록(최신순)을 넘기며 start 이전이 나오면 멈춘다. 길이는 videos.list 로."""
+def list_videos(uploads: str, start: str, end: str) -> pd.DataFrame | None:
+    """업로드 재생목록(최신순)을 넘기며 start 이전이 나오면 멈춘다. 길이는 videos.list 로.
+    받은 영상이 MAX_VIDEOS 를 넘으면 None (기획서 3.1 4단계 상한)."""
     rows, token = [], None
     lo, hi = pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)
     while True:
@@ -170,6 +174,8 @@ def list_videos(uploads: str, start: str, end: str) -> pd.DataFrame:
         dates = [r["published"] for r in rows[-len(items):] if r["published"] is not None]
         if not token or (dates and min(dates) < lo):
             break
+        if len(rows) > MAX_VIDEOS:
+            return None  # 상한 초과: 목록을 끝까지 받지 않음
     df = pd.DataFrame(rows, columns=["video_id", "title", "published"])
     df["in_period"] = df["published"].notna() & (df["published"] >= lo) & (df["published"] < hi)
     dur = {}
@@ -193,6 +199,10 @@ def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | N
                             "reason": manual_exclude[row.channel_id]})
             continue
         vids = list_videos(row.uploads, *PERIOD)
+        if vids is None:
+            checked.append({"channel_id": row.channel_id, "title": row.title, "status": "too_many_videos"})
+            log.info("%s 구독자 %s 구간 영상 %d개 초과 → too_many_videos", row.title, row.subscribers, MAX_VIDEOS)
+            continue
         n = int(vids["in_period"].sum())
         kr, fo = topic_shares(vids.loc[vids["in_period"], "title"])
         status = ("too_few_videos" if n < MIN_VIDEOS else "off_topic" if not topic_ok(kr, fo) else "picked")

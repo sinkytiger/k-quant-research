@@ -27,6 +27,8 @@ def test_is_excluded():
 def test_is_excluded_media():
     assert tr.is_excluded("SBS Biz 뉴스") == "Biz"
     assert tr.is_excluded("김어준의 겸손은힘들다 뉴스공장") == "뉴스공장"
+    assert tr.is_excluded("MBCNEWS") == "MBC"
+    assert tr.is_excluded("ytn news") == "NEWS"
 
 
 def test_topic_shares_and_rule():

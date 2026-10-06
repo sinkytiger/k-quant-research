@@ -1,6 +1,7 @@
 """팩트체크용 유튜브 채널 선정·자막 수집 (docs/factcheck/factcheck-기획.md 2·3절).
 
   python scripts/collect_transcripts.py --candidates          # 1~3단계: 후보·구독자·이름 제외 → candidates.csv
+  python scripts/collect_transcripts.py --select --dry-run   # 고정 전 확인
   python scripts/collect_transcripts.py --select [--exclude UCxxx="사유" ...]
                                                                # 4~5단계 + 고정: channels.json, docs/factcheck/channels.sha256
   python scripts/collect_transcripts.py --transcripts         # 고정된 채널의 구간 영상 자막 (재개 가능)
@@ -40,6 +41,7 @@ def main() -> None:
     g.add_argument("--transcripts", action="store_true")
     g.add_argument("--status", action="store_true")
     ap.add_argument("--exclude", nargs="*", help="기획서 3.1 수작업 제외 (1회): 채널ID=사유")
+    ap.add_argument("--dry-run", action="store_true", help="--select 결과만 보고 고정하지 않음")
     a = ap.parse_args()
     log = cli.setup("collect_transcripts")
     for sub in ("", "videos", "transcripts"):
@@ -60,6 +62,9 @@ def main() -> None:
         if len(picked) < tr.N_CHANNELS:
             sys.exit(f"조건을 만족한 채널이 {len(picked)}개뿐이다. 고정하지 않음")
         print(picked[["channel_id", "title", "subscribers"]].to_string(index=False))
+        if a.dry_run:
+            log.info("dry-run: 고정하지 않음. selection_log.csv 확인 후 --select 로 고정")
+            return
         h = tr.freeze(picked, excl)
         log.info("고정 완료. sha256 %s → docs/factcheck/channels.sha256 을 커밋할 것", h)
         return
