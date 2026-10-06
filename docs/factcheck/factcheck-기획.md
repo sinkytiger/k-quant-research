@@ -1,9 +1,10 @@
 # 증시 콘텐츠 주장 팩트체크 — 방법론 기획서
 
-작성일 2026-10-07 · 대상 저장소 `K-quant` (모듈 `factcheck`) · 상태 **승인 v1.0 (2026-10-07)**
+작성일 2026-10-07 · 대상 저장소 `K-quant` (모듈 `factcheck`) · 상태 **승인 v1.1 (2026-10-07)**
 
 변경 이력
 - v1.0 (2026-10-07) 승인. 채널은 구독자 상위 10개 기계적 선정, 공개물은 채널 익명 처리(10절)
+- v1.1 (2026-10-07) 수집 도구를 transcriptapi.com에서 YouTube Data API v3(채널·영상·게시일) + yt-dlp(자막)로 변경. 이유: 유료 크레딧 없이 수집하고, 게시일·구독자 수를 상대 표기가 아닌 정확한 값으로 받기 위해. 3분 이하 영상(쇼츠) 제외 추가
 
 ---
 
@@ -21,19 +22,21 @@
 
 ## 2. 데이터 수집
 **수집 대상** 사전에 고정한 국내 증시 유튜브 채널의 영상 자막 / 검증용 데이터는 K-quant 기존 데이터
-**수집 방법** transcriptapi.com REST API v2(`/youtube/channel/videos`, `/youtube/transcript`)로 자막(타임스탬프 포함)을 받아 `KQ_DATA_DIR/factcheck/transcripts/`에 원본 저장. 자막은 저장소에 커밋하지 않는다. Claude가 자막에서 주장을 추출해 `docs/factcheck/claims/`에 구조화 JSON으로 커밋.
+**수집 방법** 채널·영상 정보와 게시일은 YouTube Data API v3, 자막(타임스탬프 포함 json3)은 yt-dlp로 받아 `KQ_DATA_DIR/factcheck/`에 원본 저장. 자막은 저장소에 커밋하지 않는다. Claude가 자막에서 주장을 추출해 `docs/factcheck/claims/`에 구조화 JSON으로 커밋.
 
 | 변수 | 원자료 | 기관 · 코드 | 주기 | 수집 구간 |
 |---|---|---|---|---|
-| 영상 목록 | 채널 업로드 목록 | YouTube (transcriptapi 경유) | 영상 | 2025-10-01 ~ 2026-09-30 게시 |
-| 자막 | 영상 자막(자동 생성 포함), 타임스탬프 | transcriptapi.com | 영상 | 동일 |
+| 영상 목록, 게시일, 길이 | 업로드 재생목록 `playlistItems.list`(videoPublishedAt), `videos.list`(duration) | YouTube Data API v3 | 영상 | 2025-10-01 ~ 2026-09-30 게시 |
+| 자막 | 한국어 수동 자막, 없으면 자동 생성 자막(json3) | yt-dlp | 영상 | 동일 |
 | 가격·시가총액·유니버스 | K-quant 일별 스냅샷, 수정주가 | KRX Open API | 일 | 2015-09 ~ 2025-09-29 (홀드아웃 이전) |
 | 투자자별 순매수 | K-quant 수급 | KIS Open API | 일 | 동일 |
 | 공시 | K-quant 공시 | DART OpenAPI | 이벤트 | 동일 |
 | 배당·총수익 | K-quant 총수익 가격 | KIS 예탁원 배당일정 | 일 | 동일 |
 | 예측형 주장 사후 대조 가격 | K-quant 일별 스냅샷 | KRX Open API | 일 | 주장 게시일 ~ 주장 기한 |
 
-채널 영상 목록의 게시일(`publishedTimeText`)은 "3개월 전" 같은 상대 표기라 수집 구간 판정에 쓰지 않는다. 영상마다 `/youtube/info`(무료)에서 게시일을 받고, 없으면 `/youtube/video/metadata`(1크레딧)로 받는다. 둘 다 없으면 그 영상은 제외하고 건수를 기록한다.
+자막만 비공식 도구(yt-dlp)를 쓰는 이유: YouTube Data API의 자막 다운로드는 영상 소유자만 쓸 수 있어, 남의 영상 자막을 받는 공식 수단이 없다. K-quant의 "공식 API만" 원칙에 대한 예외이며, 로그인이 필요 없는 공개 자막만 받는다. 차단을 피하려고 영상 사이에 3~6초 대기하고, 받은 자막은 건너뛰어 재개한다. 자막이 없는 영상은 표식을 남기고 6절 규칙대로 제외한다.
+
+3분 이하 영상은 세지 않는다. 쇼츠는 조건·기간을 갖춘 주장이 드물고, 활동 기준(영상 50개)을 부풀린다.
 
 규칙형 주장의 검증 구간을 2025-09-29까지로 막은 이유: K-quant의 홀드아웃(2025-09-30 이후)은 자체 전략 검증에 한 번만 쓰기로 잠겨 있다. 팩트체크가 그 구간을 보면 이후 K-quant 홀드아웃 검증이 오염된다.
 
@@ -61,10 +64,10 @@
 
 | 단계 | 처리 | 이유 |
 |---|---|---|
-| 1. 후보 수집 | `/youtube/search`, type=channel로 고정 검색어 6개(주식, 주식투자, 증시, 국내주식, 종목추천, 시황) 각 3페이지 결과의 합집합 | 유튜브에 구독자 순위 API가 없어 검색으로 후보군을 만듦 |
-| 2. 구독자 수 | `/youtube/channel/info`의 `subscriberCountText`를 숫자로 변환("12.3만명" → 123,000) | 표기 단위가 한글 축약이라 변환 규칙 고정 |
+| 1. 후보 수집 | `search.list`(type=channel, regionCode=KR, relevanceLanguage=ko, 50건/페이지)로 고정 검색어 6개(주식, 주식투자, 증시, 국내주식, 종목추천, 시황) 각 3페이지 결과의 합집합 | 유튜브에 구독자 순위 API가 없어 검색으로 후보군을 만듦 |
+| 2. 구독자 수 | `channels.list`의 `statistics.subscriberCount`. 구독자 수를 숨긴 채널은 제외 | API가 공개하는 값(유효숫자 3자리로 반올림됨)을 그대로 씀 |
 | 3. 이름 제외 | 채널명·설명에 증권, 자산운용, 투자증권, 거래소, 리딩, 유료방, 카톡방이 있으면 제외 | 3.1 제외 기준을 기계적 규칙으로 |
-| 4. 활동 | 수집 구간 게시 영상 50개 이상 | 3.1 활동 기준 |
+| 4. 활동 | 수집 구간 게시, 3분 초과 영상 50개 이상 | 3.1 활동 기준 |
 | 5. 선정 | 남은 후보 중 구독자 상위 10개 | |
 
 규칙 3에 걸리지 않은 공식·리딩방 채널이 남으면, 최종 10개를 커밋하기 전에 사용자가 제외 사유를 적어 한 번만 빼고 11번째로 채운다. 이 수작업 제외는 사유와 함께 기록한다.
@@ -181,7 +184,8 @@ Claude가 자막을 읽고 주장을 뽑는다. 사람이 아닌 모델이 추�
 
 | 항목 | 값 | 출처 · 기준일 |
 |---|---|---|
-| transcriptapi.com 이용 조건·호출 한도 | (수집 전 확인) | 서비스 약관 |
+| YouTube Data API 할당량 | 일 10,000단위 무료. search.list 100, channels·playlistItems·videos.list 1 (50건 단위). 후보 수집 약 1,800단위 | Google YouTube Data API 할당량 문서, 확인일 기재 |
+| yt-dlp | 오픈소스, 공개 자막만 수집. 차단 시 대기 후 재개 | 확인일 기재 |
 | YouTube 콘텐츠 인용 범위 | 짧은 인용과 링크만, 자막 전문 재게시 금지 | 저작권법 공정 이용, 확인일 기재 |
 | 거래비용 | 왕복 0.3% (가정값) | K-quant 백테스트 가정과 동일하게 맞출 것 |
 
@@ -204,7 +208,7 @@ Claude가 자막을 읽고 주장을 뽑는다. 사람이 아닌 모델이 추�
 
 | 경로 | 내용 | 재사용하는 기존 코드 |
 |---|---|---|
-| `scripts/collect_transcripts.py` | 채널 선정(3.1), 영상 목록·게시일·자막 수집 | `src/config.py` (KQ_DATA_DIR, TRANSCRIPT_API_KEY) |
+| `scripts/collect_transcripts.py` | 채널 선정(3.1), 영상 목록·게시일·자막 수집 | `src/config.py` (KQ_DATA_DIR, YOUTUBE_API_KEY) |
 | `src/factcheck/extract.py`, `prompts/` | 주장 추출 지시문·스키마·검증 | — |
 | `src/factcheck/signals.py` | 정량화된 조건을 신호로 계산 | `src/panel.py`, `src/features/` |
 | `src/factcheck/verdict.py` | ER, t_ER, 판정 라벨 | `src/backtest.py`, `src/events.py` |

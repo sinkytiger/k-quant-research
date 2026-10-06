@@ -1,11 +1,12 @@
-"""유튜브 채널 선정·영상 목록·자막 수집 — transcriptapi.com REST v2.
+"""유튜브 채널 선정·영상 목록·자막 수집.
 
-- 인증: Authorization: Bearer TRANSCRIPT_API_KEY. 분당 300회. 실패(4xx/5xx/429)는 크레딧 차감 없음.
+- 채널·영상 정보: YouTube Data API v3 (공식, 무료 일 10,000단위). 키는 YOUTUBE_API_KEY.
+  search.list 100단위/호출, channels·playlistItems·videos.list 1단위/호출(50건).
+- 자막: yt-dlp (비공식). 남의 영상 자막을 받는 공식 수단이 없어 K-quant "공식 API만" 원칙의 예외다
+  (기획서 v1.1, 2절). 차단을 피하려고 영상 사이 대기, 받은 것은 건너뛰어 재개.
 - 채널 선정은 기획서 3.1 절차를 그대로 코드로 옮긴 것이다. 사람이 고르지 않는다.
 - 채널 목록·영상 ID·자막은 채널을 특정할 수 있으므로 KQ_DATA_DIR/factcheck/ 에만 둔다(기획서 10절).
   저장소에는 channels.json 의 SHA-256 해시만 커밋한다.
-- 게시일: 영상 목록의 publishedTimeText 는 "3개월 전" 같은 상대 표기라 쓰지 않는다.
-  /youtube/info(무료) → /youtube/video/metadata(1크레딧) 순으로 절대 날짜를 찾는다.
 """
 from __future__ import annotations
 
@@ -22,17 +23,19 @@ import requests
 
 from src import config
 
-BASE = "https://transcriptapi.com/api/v2"
+API = "https://www.googleapis.com/youtube/v3"
 
 # 기획서 3.1
 SEARCH_QUERIES = ["주식", "주식투자", "증시", "국내주식", "종목추천", "시황"]
 SEARCH_PAGES = 3
 EXCLUDE_WORDS = ["증권", "자산운용", "투자증권", "거래소", "리딩", "유료방", "카톡방"]
 MIN_VIDEOS = 50
+MIN_SECONDS = 180  # 3분 이하(쇼츠 포함)는 영상으로 세지 않는다
 N_CHANNELS = 10
 PERIOD = ("2025-10-01", "2026-09-30")
 LABEL_SEED = 42
-LANG = "ko,asr-ko,asr"
+SUB_LANGS = ["ko"]
+SLEEP = (3.0, 6.0)  # 자막 요청 사이 대기(초)
 
 
 def fc_dir() -> Path:
@@ -47,75 +50,42 @@ def hash_path() -> Path:
     return config.ROOT / "docs" / "factcheck" / "channels.sha256"
 
 
-# ---------------------------------------------------------------- API
+# ---------------------------------------------------------------- YouTube Data API
 
-def call(path: str, params: dict, retries: int = 5) -> dict:
-    key = os.environ.get("TRANSCRIPT_API_KEY")
+def call(resource: str, params: dict, retries: int = 4) -> dict:
+    key = os.environ.get("YOUTUBE_API_KEY")
     if not key:
-        raise RuntimeError(".env 에 TRANSCRIPT_API_KEY 가 없다")
+        raise RuntimeError(".env 에 YOUTUBE_API_KEY 가 없다")
     for i in range(retries):
-        r = requests.get(BASE + path, params=params, headers={"Authorization": f"Bearer {key}"}, timeout=60)
-        if r.status_code in (408, 429, 503):
-            time.sleep(float(r.headers.get("Retry-After") or 2 ** i))
+        r = requests.get(f"{API}/{resource}", params={**params, "key": key}, timeout=60)
+        if r.status_code in (500, 503):
+            time.sleep(2 ** i)
             continue
+        if r.status_code == 403 and "quotaExceeded" in r.text:
+            raise RuntimeError("YouTube API 일 할당량 소진. 내일(태평양 자정) 이어서 실행")
         r.raise_for_status()
         return r.json()
-    raise RuntimeError(f"{path} 재시도 {retries}회 실패")
+    raise RuntimeError(f"{resource} 재시도 {retries}회 실패")
 
 
-def paged(path: str, params: dict, max_pages: int) -> list[dict]:
-    out, cont = [], None
-    for _ in range(max_pages):
-        body = call(path, {**params, **({"continuation": cont} if cont else {})})
-        out += body.get("results") or []
-        cont = body.get("continuation_token")
-        if not (body.get("has_more") and cont):
-            break
-    return out
+def chunks(xs: list, n: int = 50):
+    for i in range(0, len(xs), n):
+        yield xs[i:i + n]
 
 
-# ---------------------------------------------------------------- 파싱
-
-_UNIT = {"천": 1e3, "만": 1e4, "억": 1e8, "k": 1e3, "m": 1e6, "b": 1e9}
-
-
-def parse_subscribers(text: str | None) -> int | None:
-    """'구독자 12.3만명' → 123000, '1.2M subscribers' → 1200000, '980 subscribers' → 980. 못 읽으면 None."""
-    if not text:
+def parse_duration(iso: str | None) -> int | None:
+    """'PT1H2M3S' → 3723초."""
+    m = re.fullmatch(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
+    if not m or not iso:
         return None
-    m = re.search(r"(\d[\d.,]*)\s*([천만억kKmMbB]?)", text)
-    if not m:
-        return None
-    num = float(m.group(1).replace(",", ""))
-    return int(round(num * _UNIT.get(m.group(2).lower(), 1)))
+    d, h, mi, s = (int(x or 0) for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + s
 
 
 def is_excluded(title: str, description: str = "") -> str | None:
     """기획서 3.1 규칙 3. 걸린 단어를 돌려준다."""
     text = f"{title} {description}"
     return next((w for w in EXCLUDE_WORDS if w in text), None)
-
-
-_DATE_KEYS = ("publishDate", "uploadDate", "publishedAt", "published", "upload_date", "publish_date", "date")
-
-
-def find_date(obj) -> pd.Timestamp | None:
-    """응답 JSON 어디에 있든 게시일 키를 찾아 날짜로. 응답 형식이 문서에 없어 키 이름 후보로 찾는다."""
-    if isinstance(obj, dict):
-        for k in _DATE_KEYS:
-            v = obj.get(k)
-            if isinstance(v, str) and re.match(r"\d{4}-\d{2}-\d{2}|\d{8}$", v):
-                return pd.Timestamp(v[:10] if "-" in v else f"{v[:4]}-{v[4:6]}-{v[6:8]}")
-        for v in obj.values():
-            d = find_date(v)
-            if d is not None:
-                return d
-    elif isinstance(obj, list):
-        for v in obj:
-            d = find_date(v)
-            if d is not None:
-                return d
-    return None
 
 
 def assign_labels(channel_ids: list[str], seed: int = LABEL_SEED) -> dict[str, str]:
@@ -132,70 +102,75 @@ def file_sha256(path: Path) -> str:
 # ---------------------------------------------------------------- 채널 선정 (기획서 3.1)
 
 def collect_candidates(log) -> pd.DataFrame:
-    """1~3단계: 검색 후보 → 구독자 수 → 이름 제외. 활동(4단계)은 select_channels 에서."""
-    seen: dict[str, dict] = {}
+    """1~3단계: 검색 후보 → 구독자 수 → 이름 제외. 할당량 약 1,800단위."""
+    seen: dict[str, list[str]] = {}
     for q in SEARCH_QUERIES:
-        for r in paged("/youtube/search", {"q": q, "type": "channel"}, SEARCH_PAGES):
-            cid = r.get("channelId") or r.get("id")
-            if cid:
-                seen.setdefault(cid, {"channel_id": cid, "queries": []})["queries"].append(q)
+        token = None
+        for _ in range(SEARCH_PAGES):
+            body = call("search", {"part": "snippet", "type": "channel", "q": q, "regionCode": "KR",
+                                   "relevanceLanguage": "ko", "maxResults": 50,
+                                   **({"pageToken": token} if token else {})})
+            for it in body.get("items", []):
+                seen.setdefault(it["id"]["channelId"], []).append(q)
+            token = body.get("nextPageToken")
+            if not token:
+                break
         log.info("검색 '%s' 후 후보 %d", q, len(seen))
     rows = []
-    for cid, row in seen.items():
-        info = call("/youtube/channel/info", {"channel": cid})
-        title, desc = info.get("title", ""), info.get("description", "")
-        rows.append({**row, "title": title, "handle": info.get("handle"),
-                     "subscribers": parse_subscribers(info.get("subscriberCountText")),
-                     "subscriber_text": info.get("subscriberCountText"),
-                     "excluded_by": is_excluded(title, desc)})
+    for ids in chunks(list(seen)):
+        body = call("channels", {"part": "snippet,statistics,contentDetails", "id": ",".join(ids), "maxResults": 50})
+        for it in body.get("items", []):
+            sn, st = it["snippet"], it.get("statistics", {})
+            hidden = st.get("hiddenSubscriberCount", False)
+            rows.append({"channel_id": it["id"], "title": sn.get("title", ""), "handle": sn.get("customUrl"),
+                         "subscribers": None if hidden else int(st.get("subscriberCount", 0)),
+                         "video_count": int(st.get("videoCount", 0)),
+                         "uploads": it["contentDetails"]["relatedPlaylists"]["uploads"],
+                         "queries": ",".join(seen[it["id"]]),
+                         "excluded_by": is_excluded(sn.get("title", ""), sn.get("description", ""))})
     df = pd.DataFrame(rows).sort_values("subscribers", ascending=False, na_position="last")
-    df["queries"] = df["queries"].map(",".join)
     return df.reset_index(drop=True)
 
 
-def video_date(video_id: str) -> tuple[pd.Timestamp | None, str]:
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    d = find_date(call("/youtube/info", {"video_url": url}))
-    if d is not None:
-        return d, "info"
-    d = find_date(call("/youtube/video/metadata", {"video_url": url, "include": "details"}))
-    return d, ("metadata" if d is not None else "none")
-
-
-def list_videos(channel_id: str, start: str, end: str, max_pages: int = 60) -> pd.DataFrame:
-    """최신순 목록을 넘기며 게시일을 확인하고, start 이전 영상이 나오면 멈춘다."""
-    rows, cont = [], None
-    for _ in range(max_pages):
-        body = call("/youtube/channel/videos",
-                    {"channel": channel_id, "tab": "videos", "sort": "newest",
-                     **({"continuation": cont} if cont else {})})
-        stop = False
-        for r in body.get("results") or []:
-            if r.get("members_only"):
-                continue
-            d, src = video_date(r["videoId"])
-            rows.append({"video_id": r["videoId"], "title": r.get("title"), "published": d, "date_source": src})
-            if d is not None and d < pd.Timestamp(start):
-                stop = True
-        cont = body.get("continuation_token")
-        if stop or not (body.get("has_more") and cont):
+def list_videos(uploads: str, start: str, end: str) -> pd.DataFrame:
+    """업로드 재생목록(최신순)을 넘기며 start 이전이 나오면 멈춘다. 길이는 videos.list 로."""
+    rows, token = [], None
+    lo, hi = pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)
+    while True:
+        body = call("playlistItems", {"part": "contentDetails,snippet", "playlistId": uploads, "maxResults": 50,
+                                      **({"pageToken": token} if token else {})})
+        items = body.get("items", [])
+        for it in items:
+            pub = it["contentDetails"].get("videoPublishedAt")
+            rows.append({"video_id": it["contentDetails"]["videoId"], "title": it["snippet"].get("title"),
+                         "published": pd.Timestamp(pub) if pub else None})
+        token = body.get("nextPageToken")
+        dates = [r["published"] for r in rows[-len(items):] if r["published"] is not None]
+        if not token or (dates and min(dates) < lo):
             break
-    df = pd.DataFrame(rows, columns=["video_id", "title", "published", "date_source"])
-    df["in_period"] = df["published"].between(pd.Timestamp(start), pd.Timestamp(end))
+    df = pd.DataFrame(rows, columns=["video_id", "title", "published"])
+    df["in_period"] = df["published"].notna() & (df["published"] >= lo) & (df["published"] < hi)
+    dur = {}
+    for ids in chunks(df.loc[df["in_period"], "video_id"].tolist()):
+        for it in call("videos", {"part": "contentDetails", "id": ",".join(ids)}).get("items", []):
+            dur[it["id"]] = parse_duration(it["contentDetails"].get("duration"))
+    df["seconds"] = df["video_id"].map(dur)
+    df["in_period"] &= df["seconds"].fillna(0) > MIN_SECONDS
     return df
 
 
 def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | None = None) -> pd.DataFrame:
-    """4~5단계: 구독자 순으로 내려가며 수집 구간 영상 50개 이상인 채널 10개.
+    """4~5단계: 구독자 순으로 내려가며 수집 구간 영상(3분 초과) 50개 이상인 채널 10개.
     manual_exclude = {channel_id: 사유} 는 기획서 3.1의 1회 수작업 제외."""
     manual_exclude = manual_exclude or {}
     picked, checked = [], []
-    for row in cands[cands["excluded_by"].isna() & cands["subscribers"].notna()].itertuples():
+    ok_rows = cands[cands["excluded_by"].isna() & cands["subscribers"].notna()]
+    for row in ok_rows.itertuples(index=False):
         if row.channel_id in manual_exclude:
             checked.append({"channel_id": row.channel_id, "status": "manual_exclude",
                             "reason": manual_exclude[row.channel_id]})
             continue
-        vids = list_videos(row.channel_id, *PERIOD)
+        vids = list_videos(row.uploads, *PERIOD)
         n = int(vids["in_period"].sum())
         ok = n >= MIN_VIDEOS
         checked.append({"channel_id": row.channel_id, "status": "picked" if ok else "too_few_videos", "n_videos": n})
@@ -206,11 +181,14 @@ def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | N
         if len(picked) == N_CHANNELS:
             break
     pd.DataFrame(checked).to_csv(fc_dir() / "selection_log.csv", index=False, encoding="utf-8-sig")
-    return pd.DataFrame(picked).drop(columns=["Index"], errors="ignore")
+    return pd.DataFrame(picked)
 
 
 def freeze(picked: pd.DataFrame, manual_exclude: dict[str, str] | None = None) -> str:
     """channels.json 저장(저장소 밖)하고 해시를 docs/factcheck/channels.sha256 에 쓴다."""
+    p = channels_path()
+    if p.exists():
+        raise RuntimeError(f"{p} 가 이미 있다. 채널 목록은 한 번 고정하면 바꾸지 않는다(기획서 3.1)")
     labels = assign_labels(picked["channel_id"].tolist())
     doc = {"frozen_at": pd.Timestamp.now(tz="Asia/Seoul").isoformat(timespec="seconds"),
            "procedure": "docs/factcheck/factcheck-기획.md 3.1", "period": PERIOD,
@@ -218,9 +196,6 @@ def freeze(picked: pd.DataFrame, manual_exclude: dict[str, str] | None = None) -
            "channels": [{"label": labels[r["channel_id"]], "channel_id": r["channel_id"], "title": r["title"],
                          "handle": r.get("handle"), "subscribers": r["subscribers"]}
                         for r in picked.to_dict("records")]}
-    p = channels_path()
-    if p.exists():
-        raise RuntimeError(f"{p} 가 이미 있다. 채널 목록은 한 번 고정하면 바꾸지 않는다(기획서 3.1)")
     p.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     h = file_sha256(p)
     hash_path().parent.mkdir(parents=True, exist_ok=True)
@@ -236,25 +211,34 @@ def load_channels() -> list[dict]:
     return json.loads(p.read_text(encoding="utf-8"))["channels"]
 
 
-# ---------------------------------------------------------------- 자막
+# ---------------------------------------------------------------- 자막 (yt-dlp)
 
-def transcript_path(channel_id: str, video_id: str) -> Path:
-    return fc_dir() / "transcripts" / channel_id / f"{video_id}.json"
+def transcript_dir(channel_id: str) -> Path:
+    return fc_dir() / "transcripts" / channel_id
+
+
+def has_transcript(channel_id: str, video_id: str) -> bool:
+    d = transcript_dir(channel_id)
+    return any(d.glob(f"{video_id}.*.json3")) or (d / f"{video_id}.none").exists()
 
 
 def fetch_transcript(channel_id: str, video_id: str) -> str:
-    """받은 그대로 저장. 이미 있으면 건너뜀(재개). 반환: ok / skip / none(자막 없음)."""
-    p = transcript_path(channel_id, video_id)
-    if p.exists():
+    """수동 한국어 자막이 있으면 그것, 없으면 자동 생성 자막을 json3(타임스탬프 포함)로 저장.
+    반환: ok / skip / none(자막 없음 — 표식 파일을 남겨 재시도하지 않음)."""
+    import yt_dlp
+
+    if has_transcript(channel_id, video_id):
         return "skip"
-    try:
-        body = call("/youtube/transcript", {"video_url": f"https://www.youtube.com/watch?v={video_id}",
-                                            "format": "json", "language": LANG, "include_timestamp": "true",
-                                            "send_metadata": "true"})
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code == 404:
-            return "none"
-        raise
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-    return "ok"
+    d = transcript_dir(channel_id)
+    d.mkdir(parents=True, exist_ok=True)
+    opts = {"skip_download": True, "writesubtitles": True, "writeautomaticsub": True,
+            "subtitleslangs": SUB_LANGS, "subtitlesformat": "json3",
+            "outtmpl": str(d / "%(id)s.%(ext)s"), "quiet": True, "no_warnings": True,
+            "sleep_interval_requests": 1}
+    with yt_dlp.YoutubeDL(opts) as y:
+        y.download([f"https://www.youtube.com/watch?v={video_id}"])
+    time.sleep(random.uniform(*SLEEP))
+    if any(d.glob(f"{video_id}.*.json3")):
+        return "ok"
+    (d / f"{video_id}.none").touch()
+    return "none"

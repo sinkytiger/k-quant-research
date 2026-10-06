@@ -6,6 +6,7 @@
   python scripts/collect_transcripts.py --transcripts         # 고정된 채널의 구간 영상 자막 (재개 가능)
   python scripts/collect_transcripts.py --status
 
+채널·영상 정보는 YouTube Data API(YOUTUBE_API_KEY), 자막은 yt-dlp.
 채널 목록·영상·자막은 KQ_DATA_DIR/factcheck/ 에만 저장한다(채널 익명, 기획서 10절).
 --select 결과를 확인하고 docs/factcheck/channels.sha256 을 커밋한 뒤에 --transcripts 를 돈다.
 """
@@ -49,7 +50,7 @@ def main() -> None:
         df = tr.collect_candidates(log)
         df.to_csv(cand_csv, index=False, encoding="utf-8-sig")
         log.info("후보 %d, 이름 제외 %d → %s", len(df), df["excluded_by"].notna().sum(), cand_csv)
-        print(df[df["excluded_by"].isna()].head(25)[["channel_id", "title", "subscribers", "subscriber_text"]]
+        print(df[df["excluded_by"].isna()].head(25)[["channel_id", "title", "subscribers", "video_count"]]
               .to_string(index=False))
         return
 
@@ -67,7 +68,7 @@ def main() -> None:
         stats = {"ok": 0, "skip": 0, "none": 0, "error": 0}
         for ch in tr.load_channels():
             vids = pd.read_csv(tr.fc_dir() / "videos" / f"{ch['channel_id']}.csv")
-            vids = vids[vids["in_period"]]
+            vids = vids[vids["in_period"].astype(bool)]
             for vid in vids["video_id"]:
                 try:
                     stats[tr.fetch_transcript(ch["channel_id"], vid)] += 1
@@ -83,7 +84,7 @@ def main() -> None:
             return
         for ch in tr.load_channels():
             vids = pd.read_csv(tr.fc_dir() / "videos" / f"{ch['channel_id']}.csv")
-            got = len(list((tr.fc_dir() / "transcripts" / ch["channel_id"]).glob("*.json")))
+            got = len(list(tr.transcript_dir(ch["channel_id"]).glob("*.json3")))
             print(f"채널 {ch['label']}: 구간 영상 {int(vids['in_period'].sum())}, 자막 {got}")
 
 

@@ -6,31 +6,22 @@ import pytest
 from src.factcheck import transcripts as tr
 
 
-@pytest.mark.parametrize("text,want", [
-    ("구독자 12.3만명", 123_000),
-    ("구독자 1.05천명", 1_050),
-    ("구독자 1억명", 100_000_000),
-    ("1.2M subscribers", 1_200_000),
-    ("345K subscribers", 345_000),
-    ("980 subscribers", 980),
-    ("1,234 subscribers", 1_234),
+@pytest.mark.parametrize("iso,want", [
+    ("PT1H2M3S", 3723),
+    ("PT59S", 59),
+    ("PT3M", 180),
+    ("P1DT1S", 86401),
+    ("", None),
     (None, None),
-    ("구독자 없음", None),
 ])
-def test_parse_subscribers(text, want):
-    assert tr.parse_subscribers(text) == want
+def test_parse_duration(iso, want):
+    assert tr.parse_duration(iso) == want
 
 
 def test_is_excluded():
     assert tr.is_excluded("OO투자증권 공식") == "증권"
     assert tr.is_excluded("주식왕", "무료 리딩방 안내") == "리딩"
     assert tr.is_excluded("주식왕", "매일 시황") is None
-
-
-def test_find_date_nested_and_formats():
-    assert tr.find_date({"a": {"publishDate": "2026-03-04T00:00:00"}}) == pd.Timestamp("2026-03-04")
-    assert tr.find_date([{"x": 1}, {"upload_date": "20251203"}]) == pd.Timestamp("2025-12-03")
-    assert tr.find_date({"publishedTimeText": "3개월 전"}) is None
 
 
 def test_labels_are_deterministic_and_hide_order():
