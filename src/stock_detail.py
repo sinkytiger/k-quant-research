@@ -108,18 +108,18 @@ def dividend_block(dv: pd.DataFrame, close: float | None, asof: pd.Timestamp, n:
             "dy_ttm": _r(ttm / close) if ttm and close else None}
 
 
-def to_js(code: str, payload: dict) -> str:
+def to_js(code: str, payload: dict, var: str = "KQ_STOCK") -> str:
     """<script> 로 불러올 수 있게 전역 객체에 넣는 한 줄."""
-    return f"(window.KQ_STOCK=window.KQ_STOCK||{{}})[{json.dumps(code)}]={json.dumps(payload, ensure_ascii=False)};\n"
+    return f"(window.{var}=window.{var}||{{}})[{json.dumps(code)}]={json.dumps(payload, ensure_ascii=False, separators=(',', ':'))};\n"
 
 
-def write_all(out_dir: Path, payloads: dict[str, dict]) -> int:
+def write_all(out_dir: Path, payloads: dict[str, dict], var: str = "KQ_STOCK") -> int:
     """종목 파일을 쓰고, 이번에 없는 옛 파일은 지운다. 내용이 같으면 다시 쓰지 않는다(동기화 부담)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     written = 0
     for code, p in payloads.items():
         f = out_dir / f"{code}.js"
-        s = to_js(code, p)
+        s = to_js(code, p, var)
         if not f.exists() or f.read_text(encoding="utf-8") != s:
             f.write_text(s, encoding="utf-8")
             written += 1

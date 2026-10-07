@@ -507,6 +507,31 @@ def highlow_section(log, hist_days: int = 250) -> dict:
     return out
 
 
+def etf_detail_section(log, etf_rows: list[dict], days: int = 250) -> None:
+    """ETF 상세: ETF 마다 outputs/etfs/<코드>.js. 표 행(etf_rows)에 기초지수명·괴리율·추적 차이를 붙인다."""
+    from src import etf_detail as ed
+    from src import stock_detail as sd
+
+    cal = krx_daily.saved_days("etf")
+    if len(cal) < 2 or not etf_rows:
+        return
+    t = ed.tidy(krx_daily.load_snapshots("etf", start=cal[-(days + 3)] if len(cal) > days + 3 else cal[0]))
+    cats = {r["code"]: r.get("category") for r in etf_rows}
+    payloads = {}
+    for code, g in t.groupby("code", sort=False):
+        if code not in cats:
+            continue
+        payloads[code] = ed.one(g, days - 1, leveraged=cats[code] == "레버리지·인버스")
+    n = sd.write_all(config.OUTPUTS / "etfs", clean(payloads), var="KQ_ETF")
+    for r in etf_rows:
+        p = payloads.get(r["code"])
+        if p:
+            r["index_name"] = p["index_name"]
+            r["prem_20d"] = p["prem_20d_abs"]
+            r["track_1y"] = (p["track_1y"] or {}).get("diff")
+    log.info("ETF 상세 %d개 (새로 쓴 파일 %d개)", len(payloads), n)
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -682,6 +707,7 @@ def main(argv=None) -> int:
     data["notes"] = notes_section(log)
     data["flowboard"] = flows_board_section(log)
     data["highlow"] = highlow_section(log)
+    etf_detail_section(log, data["etf"].get("rows", []))
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))

@@ -432,6 +432,14 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       상장 1년 미만·거래정지 종목과 우선주·스팩·리츠는 뺐다. 넘어선 폭 = 직전 최고(최저)치 대비. 매매 권유가 아니다.</div>
   </section>
 
+  <section id="s-etfd" role="tabpanel" data-tab="etfd">
+    <a href="#etf" class="sub" style="color:var(--series-1);text-decoration:none">← ETF 목록</a>
+    <div class="row" style="justify-content: space-between; align-items: flex-start; margin-top:8px">
+      <div class="stk-head" id="etfd-head"></div>
+    </div>
+    <div id="etfd-body"></div>
+  </section>
+
   <section id="s-filings" role="tabpanel" data-tab="filings">
     <div class="card-h">
       <div><h2>공시 피드</h2><div class="sub" id="fl-sub">불러오는 중…</div></div>
@@ -981,7 +989,8 @@ function renderDetail() {
   $("#detail-head").innerHTML = `<h3>${esc(r.name)} <span class="muted" style="font-size:12px">${r.code} · ${r.market}</span></h3>
     <div style="font-size:18px;font-weight:650;margin-top:4px">${Math.round(r.close).toLocaleString("ko-KR")}원 <span class="${signCls(r.pct)}" style="font-size:14px">${sgn(r.pct) + Math.abs(r.pct * 100).toFixed(2)}%</span></div>`;
   candleChart($("#ch-candle"), H.candles[r.code] || []);
-  $("#detail-link").innerHTML = STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">수급·뉴스·공시까지 자세히 보기 →</a>` : "";
+  $("#detail-link").innerHTML = STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">수급·뉴스·공시까지 자세히 보기 →</a>`
+    : r.market === "ETF" ? `<a href="#etf:${r.code}">괴리율·자금 흐름·같은 지수 ETF 보기 →</a>` : "";
 }
 function candleChart(host, data) {
   host.innerHTML = "";
@@ -1455,6 +1464,82 @@ function renderHighLow() {
   $("#hl-hi").innerHTML = tbl(X.hi, "hi");
   $("#hl-lo").innerHTML = tbl(X.lo, "lo");
 }
+/* ---------- ETF 상세 (etfs/<코드>.js 를 고를 때 불러온다) ---------- */
+let ETF_CODE = null, ETF_RANGE = 250;
+function loadEtf(code) {
+  window.KQ_ETF = window.KQ_ETF || {};
+  if (KQ_ETF[code]) return Promise.resolve(KQ_ETF[code]);
+  return new Promise((ok, fail) => {
+    const sc = document.createElement("script");
+    sc.src = `etfs/${code}.js?v=${encodeURIComponent(D.generated)}`;
+    sc.onload = () => (KQ_ETF[code] ? ok(KQ_ETF[code]) : fail());
+    sc.onerror = () => fail();
+    document.head.appendChild(sc);
+  });
+}
+function renderEtfDetail() {
+  const rows = (D.etf && D.etf.rows) || [];
+  const R = rows.find((r) => r.code === ETF_CODE);
+  if (!R) { $("#etfd-head").innerHTML = "<h2>ETF 를 찾지 못했다</h2>"; $("#etfd-body").innerHTML = ""; return; }
+  $("#etfd-head").innerHTML = `<h2>${esc(R.name)} <span class="muted" style="font-size:13px;font-weight:400">${R.code} · ${esc(R.category)}</span></h2><div class="sub">불러오는 중…</div>`;
+  const want = ETF_CODE;
+  loadEtf(want).then((E) => { if (want === ETF_CODE && TAB === "etfd") drawEtf(R, E, rows); })
+    .catch(() => { $("#etfd-body").innerHTML = `<div class="card muted">etfs/${esc(want)}.js 를 불러오지 못했다. 대시보드를 새로 만든 뒤 outputs 폴더째로 열어야 한다.</div>`; });
+}
+function drawEtf(R, E, rows) {
+  const toISO = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`;
+  const c = E.close, n = c.length, chg = n > 1 ? c[n - 1] - c[n - 2] : 0;
+  const lev = R.category === "레버리지·인버스", foreign = R.category === "해외 주식" || /미국|S&P|나스닥|NASDAQ|글로벌|MSCI/i.test(E.index_name);
+  $("#etfd-head").innerHTML = `<h2>${esc(R.name)} <span class="muted" style="font-size:13px;font-weight:400">${R.code} · ${esc(R.category)}${E.index_name ? " · 기초지수 " + esc(E.index_name) : ""}</span></h2>
+    <div class="stk-price">${won(c[n - 1])}원<span class="chg ${signCls(chg)}">${sgn(chg)}${won(Math.abs(chg))} (${fmtPct(n > 1 ? chg / c[n - 2] : 0, 2)})</span></div>
+    <div class="sub">${toISO(E.dates[n - 1])} 종가 · 수익률은 분배금 포함 · 실시간 시세가 아니다</div>`;
+  const t1 = E.track_1y, eokv = (v) => v == null ? "–" : (v >= 0 ? "+" : "−") + Math.abs(Math.round(v / 1e8)).toLocaleString("ko-KR") + "억";
+  const tiles = [
+    { label: "순자산", value: R.aum == null ? "–" : krw(R.aum), delta: `20일 평균 거래대금 ${R.value_20d == null ? "–" : krw(R.value_20d)}` },
+    { label: "1개월 자금 유입", value: eokv(R.flow_1m), cls: signCls(R.flow_1m), delta: `순자산 대비 ${fmtPct(R.flow_1m_pct)}` },
+    { label: "1개월 · 3개월", value: fmtPct(R.ret_1m), cls: signCls(R.ret_1m), delta: `3개월 ${fmtPct(R.ret_3m)} · 연초 대비 ${fmtPct(R.ret_ytd)}` },
+    { label: "1년 수익률", value: fmtPct(R.ret_1y), cls: signCls(R.ret_1y), delta: "분배금 포함 총수익" },
+    { label: "괴리율 (오늘)", value: E.prem_now == null ? "–" : fmtPct(E.prem_now, 2), delta: `최근 20일 평균 절대 괴리 ${E.prem_20d_abs == null ? "–" : (E.prem_20d_abs * 100).toFixed(2) + "%"}` },
+    { label: "추적 차이 (1년)", value: lev ? "해당 없음" : t1 ? fmtPct(t1.diff, 2) : "–", cls: t1 ? signCls(t1.diff) : "",
+      delta: lev ? "레버리지·인버스는 매일 재조정" : t1 ? `ETF ${fmtPct(t1.etf)} vs 지수 ${fmtPct(t1.idx)}${foreign ? " · 환율 효과 포함" : ""}` : "1년 이력 부족" },
+  ];
+  const peers = rows.filter((r) => E.index_name && r.index_name === E.index_name).sort((a, b) => (b.aum ?? 0) - (a.aum ?? 0));
+  $("#etfd-body").innerHTML = `
+    <div class="tiles">${tiles.map((t) => `<div class="tile"><div class="label">${esc(t.label)}</div><div class="value ${t.cls || ""}">${esc(t.value)}</div><div class="delta">${esc(t.delta)}</div></div>`).join("")}</div>
+    <div class="card">
+      <div class="card-h"><div class="sub">종가 (원)</div><div class="rank-tabs row" id="etfd-range" role="group" aria-label="기간"></div></div>
+      <div class="chart" id="ch-etfd"></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="sub">누적 자금 유입 (억원, 설정 + · 환매 −)</div><div class="chart" id="ch-etfd-flow"></div></div>
+      <div class="card"><div class="sub">괴리율 (종가 ÷ NAV − 1, %)</div><div class="chart" id="ch-etfd-prem"></div>
+        <div class="note">${foreign ? "해외 지수 ETF 는 NAV 계산 시점이 국내 장 마감과 달라 괴리율이 원래 크게 움직인다." : "국내 ETF 는 유동성공급자(LP)가 괴리를 좁힌다. 지속적으로 벌어지면 거래에 주의."}</div></div>
+    </div>
+    <div class="card scroll">
+      <div class="sub" style="margin-bottom:6px">같은 기초지수 ETF ${peers.length ? `(${esc(E.index_name)} · ${peers.length}개)` : ""}</div>
+      ${peers.length > 1 ? `<table><thead><tr><th>ETF</th><th class="num">순자산</th><th class="num">1개월 유입</th><th class="num">3개월</th><th class="num">1년</th><th class="num">추적 차이 1년</th><th class="num">평균 괴리(20일)</th><th class="num">거래대금(20일)</th></tr></thead><tbody>
+        ${peers.map((r) => `<tr${r.code === R.code ? ' style="background:var(--grid)"' : ""}><td>${r.code === R.code ? `<b>${esc(r.name)}</b>` : `<a href="#etf:${r.code}">${esc(r.name)}</a>`}</td>
+          <td class="num">${r.aum == null ? "–" : krw(r.aum)}</td><td class="num ${signCls(r.flow_1m)}">${eokv(r.flow_1m)}</td>
+          <td class="num ${signCls(r.ret_3m)}">${fmtPct(r.ret_3m)}</td><td class="num ${signCls(r.ret_1y)}">${fmtPct(r.ret_1y)}</td>
+          <td class="num">${r.track_1y == null ? "–" : fmtPct(r.track_1y, 2)}</td><td class="num">${r.prem_20d == null ? "–" : (r.prem_20d * 100).toFixed(2) + "%"}</td>
+          <td class="num">${r.value_20d == null ? "–" : krw(r.value_20d)}</td></tr>`).join("")}</tbody></table>
+        <div class="note">같은 지수를 따라도 보수·추적 방식·분배 정책에 따라 성과가 갈린다. 운용보수는 KRX 일별매매에 없어 표시하지 않는다.</div>`
+        : `<div class="note">같은 기초지수를 따르는 다른 ETF 가 없다.</div>`}
+    </div>
+    <div class="note">표시용 정보이며 매매 권유가 아니다.</div>`;
+  const draw = () => {
+    const k = Math.max(0, n - ETF_RANGE);
+    lineChart($("#ch-etfd"), [{ name: R.name, color: css("--series-1"), points: E.dates.slice(k).map((d, i) => [toISO(d), c[k + i]]) }],
+      { height: 260, yfmt: (v) => Math.round(v).toLocaleString("ko-KR"), aria: "ETF 종가" });
+    let acc = 0;
+    lineChart($("#ch-etfd-flow"), [{ name: "누적 유입", color: css("--series-2"), points: E.dates.slice(k).map((d, i) => [toISO(d), (acc += E.flow[k + i] || 0)]) }],
+      { height: 200, yfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v)).toLocaleString("ko-KR"), refs: [{ y: 0, label: "0" }], aria: "누적 자금 유입" });
+    lineChart($("#ch-etfd-prem"), [{ name: "괴리율", color: css("--series-3"), points: E.dates.slice(k).map((d, i) => [toISO(d), E.prem[k + i] == null ? null : E.prem[k + i] * 100]).filter((p) => p[1] != null) }],
+      { height: 200, yfmt: (v) => v.toFixed(2) + "%", refs: [{ y: 0, label: "0" }], aria: "괴리율" });
+  };
+  seg($("#etfd-range"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => ETF_RANGE, (v) => { ETF_RANGE = +v; draw(); });
+  draw();
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1650,7 +1735,7 @@ function renderEtf() {
   more.textContent = ETF_ALL ? "40개만 보기" : `전체 ${rows.length.toLocaleString("ko-KR")}개 보기`;
   if (!ETF_ALL) rows = [...rows].sort((a, b) => (b.aum ?? 0) - (a.aum ?? 0)).slice(0, 40);
   table($("#etf-table"), [
-    { key: "name", label: "ETF", html: (r) => `${esc(r.name)} <span class="muted">${r.code}</span>` },
+    { key: "name", label: "ETF", html: (r) => `<a href="#etf:${r.code}">${esc(r.name)}</a> <span class="muted">${r.code}</span>` },
     { key: "category", label: "분류" },
     { key: "aum", label: "순자산(억)", num: true, fmt: eok },
     { key: "ret_1w", label: "1주", num: true, fmt: (v) => fmtPct(v) },
@@ -1685,7 +1770,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "market"];
@@ -1693,6 +1778,7 @@ let LAB_LAST = "research", MKT_LAST = "flows";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
 try { const v = localStorage.getItem("kq-mkt"); if (MKT.includes(v)) MKT_LAST = v; } catch (e) {}
 function showTab(name) {
+  if (name && name.startsWith("etf:")) { ETF_CODE = name.slice(4); name = "etfd"; }
   if (name && name.startsWith("stock:")) { STK_CODE = name.slice(6); try { localStorage.setItem("kq-stock", STK_CODE); } catch (e) {} name = "stock"; }
   if (name === "lab") name = LAB_LAST;
   if (name === "mkt") name = MKT_LAST;
@@ -1703,7 +1789,7 @@ function showTab(name) {
   if (lab) { LAB_LAST = name; try { localStorage.setItem("kq-lab", name); } catch (e) {} }
   const mk = MKT.includes(name);
   if (mk) { MKT_LAST = name; try { localStorage.setItem("kq-mkt", name); } catch (e) {} }
-  const group = lab ? "lab" : mk ? "mkt" : name === "compare" ? "stock" : name;
+  const group = lab ? "lab" : mk ? "mkt" : name === "compare" ? "stock" : name === "etfd" ? "etf" : name;
   document.querySelectorAll("nav.tabs button").forEach((b) => {
     const on = b.dataset.tab === group;
     b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1;
@@ -1714,9 +1800,9 @@ function showTab(name) {
   document.querySelectorAll("section[role=tabpanel]").forEach((s) => (s.hidden = s.dataset.tab !== name));
   hideTip();
   RENDER[name]();
-  const h = name === "stock" && STK_CODE ? "stock:" + STK_CODE : name;
+  const h = name === "stock" && STK_CODE ? "stock:" + STK_CODE : name === "etfd" && ETF_CODE ? "etf:" + ETF_CODE : name;
   if (location.hash.slice(1) !== h) history.replaceState(null, "", "#" + h);
-  if (name === "stock") scrollTo(0, 0);
+  if (name === "stock" || name === "etfd") scrollTo(0, 0);
 }
 function renderAll() { RENDER[TAB](); }
 
