@@ -15,6 +15,7 @@ import sys
 from datetime import datetime
 
 import _boot  # noqa: F401
+import numpy as np
 import pandas as pd
 
 from src import cli, config, krx_api
@@ -678,6 +679,172 @@ def fin_block(code: str) -> dict:
                for k in keys}, "rcept": None if pd.isna(r["rcept_dt"]) else f"{r['rcept_dt']:%Y-%m-%d}", "hist": v.history(q, code, 8)}
 
 
+def _sectors() -> dict:
+    try:
+        from src.universe import kis_master
+        return kis_master.sectors()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _snap_info() -> dict:
+    """최신 스냅샷의 종목코드 → (시장, 이름)."""
+    out = {}
+    for ds, mk in (("ksq", "코스닥"), ("stk", "코스피")):
+        days = krx_daily.saved_days(ds)
+        if days:
+            r = krx_daily.load_snapshots(ds, start=days[-1])
+            out.update({str(c): (mk, str(n)) for c, n in zip(r["ISU_CD"], r["ISU_NM"])})
+    return out
+
+
+def earnings_section(log) -> dict:
+    """실적 시즌 보드 → outputs/earnings.js (시장 탭 '실적'을 열 때 불러온다)."""
+    from src import earnings as e
+
+    q, m = _valuation()
+    if m.empty:
+        return {}
+    d = e.season_rows(q, m["mcap"].to_dict())
+    if d.empty:
+        return {}
+    info, sec = _snap_info(), _sectors()
+    d = d[d.index.isin(list(info))]
+    mk = pd.Series({c: info[c][0] for c in d.index})
+    sc = pd.Series({c: sec.get(c, "기타") for c in d.index})
+    r = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
+    rows = [[c, info[c][1], info[c][0], sec.get(c, "기타"), r(x.mcap), None if pd.isna(x.rcept_dt) else f"{x.rcept_dt:%Y-%m-%d}",
+             r(x.rev), r(x.op), r(x.ni), r(x.rev_p), r(x.op_p), r(x.rev_yoy), r(x.op_yoy), x.turn] for c, x in d.iterrows()]
+
+    def summ(g):
+        t = e.summary(d, g)
+        return {str(k): {"n": int(v.n), "up": r(v.up), "op": r(v.op), "op_p": r(v.op_p), "yoy": r(v.op_sum_yoy)} for k, v in t.iterrows()}
+    payload = {"period": e.label(d.attrs["period"]), "cols": ["code", "name", "market", "sector", "mcap", "rcept", "rev", "op", "ni",
+                                                              "rev_p", "op_p", "rev_yoy", "op_yoy", "turn"],
+               "rows": rows, "by_market": summ(mk), "by_sector": summ(sc), "all": summ(None)}
+    out = config.OUTPUTS / "earnings.js"
+    out.write_text("window.KQ_EARN=" + json.dumps(clean(payload), ensure_ascii=False, separators=(",", ":")) + ";\n", encoding="utf-8")
+    log.info("실적 시즌 %s: %d개 회사 (흑자전환 %d, 적자전환 %d)", payload["period"], len(rows),
+             int((d["turn"] == "흑자전환").sum()), int((d["turn"] == "적자전환").sum()))
+    return {"period": payload["period"], "n": len(rows)}
+
+
+def mcap_rank_section(log, top: int = 50) -> dict:
+    """시가총액 순위 변동: 오늘·1주(5거래일)·1개월(21거래일) 전 순위 (보통주)."""
+    from src import market_valuation as mv
+
+    cal = krx_daily.saved_days("stk")
+    if len(cal) < 22:
+        return {}
+    pick = {"now": cal[-1], "w1": cal[-6], "m1": cal[-22]}
+    caps = mv.caps_on(list(pick.values()))
+    info = _snap_info()
+    out = {"asof": f"{cal[-1]:%Y-%m-%d}", "dates": {k: f"{v:%Y-%m-%d}" for k, v in pick.items()}, "markets": {}}
+    for mk in ("코스피", "코스닥"):
+        ranks = {}
+        for k, d in pick.items():
+            c = caps[(caps["Date"] == d) & (caps["market"] == mk)].set_index("code")["mcap"].sort_values(ascending=False)
+            ranks[k] = (pd.Series(range(1, len(c) + 1), index=c.index), c)
+        rk, cap = ranks["now"]
+        rows = []
+        for code in rk.index[:top]:
+            cp_m = ranks["m1"][1].get(code)
+            rows.append({"code": code, "name": info.get(code, ("", code))[1], "rank": int(rk[code]),
+                         "w1": None if code not in ranks["w1"][0].index else int(ranks["w1"][0][code]),
+                         "m1": None if code not in ranks["m1"][0].index else int(ranks["m1"][0][code]),
+                         "mcap": float(cap[code]), "chg_m1": None if not cp_m else float(cap[code] / cp_m - 1)})
+        out["markets"][mk] = rows
+    log.info("시총 순위 변동 (%s 기준, 1주 %s, 1개월 %s)", out["asof"], out["dates"]["w1"], out["dates"]["m1"])
+    return out
+
+
+def rotation_section(log, weeks: int = 12) -> dict:
+    """업종 로테이션: 최근 weeks 주 업종별 주간 수익률(주초 시총 가중, 수정주가). 52주 신고가 계산의 수정가를 재사용."""
+    from src import market_valuation as mv
+
+    if "C" not in _BAND:
+        return {}
+    C = _BAND["C"]
+    cal = list(C.index)
+    ends = cal[::-1][::5][::-1][-(weeks + 1):]  # 마지막 날 포함 5거래일 간격
+    caps = mv.caps_on(ends[:-1])
+    sec = _sectors()
+    out = {"weeks": [f"{d:%m/%d}" for d in ends[1:]], "markets": {}}
+    for mk in ("코스피", "코스닥"):
+        cols = []
+        for a, b in zip(ends[:-1], ends[1:]):
+            w = caps[(caps["Date"] == a) & (caps["market"] == mk)].set_index("code")["mcap"]
+            w = w[w.index.isin(C.columns)]
+            r = (C.loc[b, w.index] / C.loc[a, w.index] - 1)
+            ok = r.notna() & (w > 0)
+            g = pd.DataFrame({"r": r[ok], "w": w[ok], "s": [sec.get(c, "기타") for c in w[ok].index]})
+            cols.append((g["r"] * g["w"]).groupby(g["s"]).sum() / g["w"].groupby(g["s"]).sum() if len(g) else pd.Series(dtype=float))
+        tab = pd.concat(cols, axis=1)
+        last_w = caps[(caps["Date"] == ends[-2]) & (caps["market"] == mk)]
+        wt = last_w.assign(s=[sec.get(c, "기타") for c in last_w["code"]]).groupby("s")["mcap"].sum()
+        wt = wt / wt.sum()
+        keep = [s for s in tab.index if s != "기타" and wt.get(s, 0) >= 0.005]
+        tab = tab.loc[keep]
+        recent = tab.iloc[:, -4:].apply(lambda x: float(np.prod(1 + x.fillna(0)) - 1), axis=1).sort_values(ascending=False)
+        out["markets"][mk] = {"sectors": list(recent.index), "weight": [round(float(wt.get(s, 0)), 4) for s in recent.index],
+                              "ret": [[None if v != v else round(float(v), 4) for v in tab.loc[s]] for s in recent.index]}
+    log.info("업종 로테이션 %d주 (%s~%s)", weeks, out["weeks"][0], out["weeks"][-1])
+    return out
+
+
+def calendar_section(log, days: int = 45) -> list[dict]:
+    """다가오는 시장 일정: 휴장(KIS 달력), 선물·옵션 만기(둘째 목요일), 코스피200 정기변경, 정기보고서 마감, 배당 기준일."""
+    from src.data import dividends
+    from src.data import market_extra as mx
+
+    today = pd.Timestamp.today().normalize()
+    end = today + pd.Timedelta(days=days)
+    cal = mx.load_calendar()
+    closed = {d for d, o in cal.items() if not o and d.weekday() < 5}
+    known_to = cal.index.max() if len(cal) else today
+    ev = []
+    for d in sorted(closed):
+        if today <= d <= end:
+            ev.append({"date": f"{d:%Y-%m-%d}", "kind": "휴장", "title": "증시 휴장"})
+
+    def prev_open(d):
+        while d in closed or d.weekday() >= 5:
+            d -= pd.Timedelta(days=1)
+        return d
+    for m in pd.period_range(today.to_period("M"), end.to_period("M"), freq="M"):
+        first = pd.Timestamp(year=m.year, month=m.month, day=1)
+        thu2 = first + pd.Timedelta(days=(3 - first.weekday()) % 7 + 7)
+        d = prev_open(thu2)
+        if today <= d <= end:
+            quarter = m.month in (3, 6, 9, 12)
+            ev.append({"date": f"{d:%Y-%m-%d}", "kind": "만기", "title": "선물·옵션 동시 만기" if quarter else "옵션 만기",
+                       "note": "" if d <= known_to else "휴장 여부 미확인"})
+            if m.month in (6, 12):
+                nxt = d + pd.Timedelta(days=1)
+                while nxt in closed or nxt.weekday() >= 5:
+                    nxt += pd.Timedelta(days=1)
+                ev.append({"date": f"{nxt:%Y-%m-%d}", "kind": "지수", "title": "코스피200 정기변경 반영"})
+    for y in range(today.year, end.year + 1):
+        for (mm, dd), t in (((3, 31), "사업보고서 제출 마감 (12월 결산)"), ((5, 15), "1분기 보고서 제출 마감"),
+                            ((8, 14), "반기 보고서 제출 마감"), ((11, 14), "3분기 보고서 제출 마감")):
+            d0 = d = pd.Timestamp(year=y, month=mm, day=dd)
+            while d in closed or d.weekday() >= 5:  # 마감일이 주말·휴일이면 다음 영업일
+                d += pd.Timedelta(days=1)
+            if today <= d <= end:
+                ev.append({"date": f"{d:%Y-%m-%d}", "kind": "공시", "title": t,
+                           "note": "" if d == d0 else f"{d0:%m/%d} 이 휴일이라 다음 영업일"})
+    names = membership.load_names()
+    for c in membership.current_members():
+        dv = dividends.load(c)
+        dv = dv[(dv["record_date"] >= today) & (dv["record_date"] <= end)]
+        for r in dv.itertuples():
+            ev.append({"date": f"{r.record_date:%Y-%m-%d}", "kind": "배당", "title": f"{names.get(c, c)} {r.kind} 배당 기준일",
+                       "note": f"주당 {r.dps:,.0f}원", "code": c})
+    ev.sort(key=lambda x: (x["date"], x["kind"]))
+    log.info("다가오는 일정 %d건 (~%s)", len(ev), f"{end:%Y-%m-%d}")
+    return ev
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -884,8 +1051,12 @@ def main(argv=None) -> int:
     data["notes"] = notes_section(log)
     data["flowboard"] = flows_board_section(log)
     data["highlow"] = highlow_section(log)
+    data["rotation"] = rotation_section(log)
+    data["mrank"] = mcap_rank_section(log)
+    data["calendar"] = calendar_section(log)
     etf_detail_section(log, data["etf"].get("rows", []))
     data["valuation"] = valuation_section(log, data)
+    data["earnings"] = earnings_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))

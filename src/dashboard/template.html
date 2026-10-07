@@ -289,6 +289,8 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
   <div class="subnav rank-tabs row" id="subnav-mkt" role="group" aria-label="시장 하위 메뉴" hidden>
     <button type="button" data-tab="flows">수급</button>
     <button type="button" data-tab="highlow">52주 신고가 · 신저가</button>
+    <button type="button" data-tab="earnings">실적</button>
+    <button type="button" data-tab="mrank">시총 순위</button>
     <button type="button" data-tab="market">시장 · 국면</button>
   </div>
   <div class="subnav rank-tabs row" id="subnav" role="group" aria-label="연구 하위 메뉴" hidden>
@@ -315,17 +317,19 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <div class="card" id="map-card">
       <div class="card-h">
         <div><h2>업종 지도</h2><div class="sub" id="map-sub"></div></div>
-        <div class="row" style="gap:12px"><div class="rank-tabs row" id="map-per" role="group" aria-label="기간"></div>
+        <div class="row" style="gap:12px"><div class="rank-tabs row" id="map-view" role="group" aria-label="보기"></div><div class="rank-tabs row" id="map-per" role="group" aria-label="기간"></div>
           <div class="rank-tabs row" id="map-mkt" role="group" aria-label="시장"></div></div>
       </div>
-      <div class="map-wrap">
+      <div class="scroll" id="rot-wrap" hidden><table class="heat" id="rot-heat"></table>
+        <div class="note">업종별 주간 수익률(주초 시가총액 가중, 수정주가, 5거래일 단위). 위에서부터 최근 4주 누적 수익률이 높은 순. 비중 0.5% 미만 업종은 뺐다.</div></div>
+      <div class="map-wrap" id="map-main">
         <div class="treemap" id="treemap" role="img" aria-label="업종별 시가총액·수익률 지도"></div>
         <div>
           <div class="sub" style="margin-bottom:4px">업종 수익률 (시총가중)</div>
           <div class="sec-list" id="sec-list"></div>
         </div>
       </div>
-      <div class="heat-scale"><span id="map-lo"></span><span class="bar" id="map-bar"></span><span id="map-hi"></span>
+      <div class="heat-scale" id="map-scale"><span id="map-lo"></span><span class="bar" id="map-bar"></span><span id="map-hi"></span>
         <span>· 칸 크기 = 시가총액, 색 = 수익률(상승 빨강 · 하락 파랑). 업종 = KIS 종목마스터(KRX 업종 분류). 칸을 누르면 종목 상세, 업종 이름을 누르면 확대.</span></div>
     </div>
     <div class="home-main">
@@ -351,7 +355,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
         <ul id="home-filings"></ul>
       </div>
       <div class="card sched">
-        <div class="card-h"><div><h2>배당 기준일</h2><div class="sub">최근 30일 ~ 앞으로 120일 · KIS 예탁원 일정</div></div></div>
+        <div class="card-h"><div><h2>다가오는 일정</h2><div class="sub">앞으로 45일 · 휴장(KIS 달력)·만기·지수 정기변경·보고서 마감·배당 기준일</div></div></div>
         <ul id="home-divs"></ul>
       </div>
     </div>
@@ -517,6 +521,31 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       조건 검색은 과거 성과를 보장하지 않고, 이 조건들로 만든 전략은 검증하지 않았다. 매매 권유가 아니다.</div>
   </section>
 
+  <section id="s-earnings" role="tabpanel" data-tab="earnings">
+    <div class="card-h">
+      <div><h2 id="ern-title">실적 시즌</h2><div class="sub" id="ern-sub">불러오는 중…</div></div>
+      <div class="rank-tabs row" id="ern-mkt" role="group" aria-label="시장"></div>
+    </div>
+    <div class="tiles" id="ern-tiles" style="margin-top:4px"></div>
+    <div class="card"><div class="sub">업종별 영업이익 증감 (전년 같은 분기 대비, 조원 · 두 분기 모두 보고한 회사)</div><div class="chart" id="ch-ern-sec"></div></div>
+    <div class="ctl-row">
+      <div class="rank-tabs row" id="ern-list" role="group" aria-label="목록"></div>
+      <div class="rank-tabs row" id="ern-cap" role="group" aria-label="시가총액"></div>
+    </div>
+    <div class="card scroll"><table id="ern-table"></table><div class="note" id="ern-note"></div></div>
+    <div class="note">정기보고서(분기·반기·사업보고서) 기준이라 회사가 먼저 내는 잠정실적 공시보다 늦다. 연결 우선, 분기 값은 누적 차이.
+      YoY = 전년 같은 분기 대비(전년이 0 이하이면 비움). 데이터 오류로 보이는 종목은 뺐다. 매매 권유가 아니다.</div>
+  </section>
+
+  <section id="s-mrank" role="tabpanel" data-tab="mrank">
+    <div class="card-h">
+      <div><h2>시가총액 순위 변동</h2><div class="sub" id="mr-sub"></div></div>
+      <div class="rank-tabs row" id="mr-mkt" role="group" aria-label="시장"></div>
+    </div>
+    <div class="card scroll"><table id="mr-table"></table>
+      <div class="note">보통주 기준, KRX 확정 시가총액. ▲ = 순위가 올랐다(숫자가 작아졌다). 신규 = 1개월 전에는 상위 50 밖.</div></div>
+  </section>
+
   <section id="s-filings" role="tabpanel" data-tab="filings">
     <div class="card-h">
       <div><h2>공시 피드</h2><div class="sub" id="fl-sub">불러오는 중…</div></div>
@@ -550,7 +579,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <div class="row" style="justify-content: space-between">
       <div>
         <h2>시장</h2>
-        <div class="sub">두 선의 기준이 다르다: KOSPI200 은 가격지수, KODEX200 은 분배금 포함 총수익.</div>
+        <div class="sub">두 선의 기준이 다르다: KOSPI200 은 가격지수, KODEX200 은 분배금 포함 총수익. 일간 리서치가 있는 날은 마우스를 올리면 헤드라인이 보인다.</div>
       </div>
       <div class="seg row" id="range" role="group" aria-label="기간"></div>
     </div>
@@ -784,6 +813,7 @@ function lineChart(host, series, opt = {}) {
       dots[k].setAttribute("cx", X(xs[i])); dots[k].setAttribute("cy", Y(v)); dots[k].setAttribute("visibility", "visible");
       rows.push({ label: s.name, value: opt.yfmt ? opt.yfmt(v) : v, color: s.color });
     });
+    if (opt.tipExtra) rows.push(...(opt.tipExtra(date) || []));
     showTip(ev.clientX, ev.clientY, date, rows);
   });
   hit.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); hideTip(); });
@@ -965,7 +995,7 @@ function renderHome() {
   $("#idx-strip").innerHTML = cards.map((c) => `<div class="mcard"><div class="nm">${esc(c.name)}</div><div class="v">${val(c)}</div>
     <div class="d ${signCls(c.chg)}">${fmtChg(c)}</div>${sparkline(c.spark.slice(-60), 160, 30, c.chg >= 0, true)}</div>`).join("");
   const up = H.upcoming || [];
-  $("#home-divs").innerHTML = up.length ? up.map((u) => `<li><span class="dt">${u.date.slice(5).replace("-", ".")}</span><span class="tt"><a href="#stock:${u.code}">${esc(u.name)}</a></span>
+  if (D.calendar) { renderCalendar(); } else $("#home-divs").innerHTML = up.length ? up.map((u) => `<li><span class="dt">${u.date.slice(5).replace("-", ".")}</span><span class="tt"><a href="#stock:${u.code}">${esc(u.name)}</a></span>
       <span class="muted" style="font-size:12px">${esc(u.kind)}</span><span style="width:76px;text-align:right">${Math.round(u.dps).toLocaleString("ko-KR")}원</span></li>`).join("")
     : `<li class="muted">예정된 기준일 없음 (연말 배당은 보통 11~12월에 공시)</li>`;
   const F = H.filings || [];
@@ -975,7 +1005,7 @@ function renderHome() {
   const items = cards.map((c) => `<span>${esc(c.name)} <b>${val(c)}</b> <span class="${signCls(c.chg)}">${fmtChg(c)}</span></span>`).join("");
   $("#ticker").innerHTML = items + items;
   renderRank();
-  renderMap();
+  renderMapCard();
 }
 /* ---------- 업종 지도 (squarified treemap) ---------- */
 let MAP_MKT = "코스피", MAP_PER = "r1d", MAP_SEC = null;
@@ -1924,6 +1954,90 @@ function scrButtons() {
   $("#scr-cmp").textContent = `선택 종목 비교 →${ok.length ? ` (${Math.min(4, ok.length)})` : ""}`;
   $("#scr-cmp").title = SCR_PICK.size > ok.length ? "상세 데이터가 있는 종목(유니버스·홈 순위·업종 지도)만 비교할 수 있다" : "";
 }
+/* ---------- 실적 시즌 (earnings.js) ---------- */
+let ERN = null, ERN_MKT = "전체", ERN_LIST = "big", ERN_CAP = 1e11;
+function loadErn() {
+  if (window.KQ_EARN) return Promise.resolve(window.KQ_EARN);
+  return new Promise((ok, fail) => { const sc = document.createElement("script"); sc.src = `earnings.js?v=${encodeURIComponent(D.generated)}`;
+    sc.onload = () => (window.KQ_EARN ? ok(window.KQ_EARN) : fail()); sc.onerror = () => fail(); document.head.appendChild(sc); });
+}
+function renderEarnings() {
+  if (!ERN) { loadErn().then((x) => { ERN = x; if (TAB === "earnings") renderEarnings(); }).catch(() => { $("#ern-sub").textContent = "earnings.js 를 불러오지 못했다."; }); return; }
+  const C = ERN.cols, all = ERN.rows.map((r) => Object.fromEntries(C.map((c, i) => [c, r[i]])));
+  const rows = all.filter((r) => ERN_MKT === "전체" || r.market === ERN_MKT);
+  $("#ern-title").textContent = `실적 시즌 · ${ERN.period}`;
+  $("#ern-sub").textContent = `정기보고서 기준 ${all.length.toLocaleString("ko-KR")}개 회사 · 전년 같은 분기와 비교`;
+  const S = ERN_MKT === "전체" ? ERN.all["전체"] : ERN.by_market[ERN_MKT];
+  const cnt = (t) => rows.filter((r) => r.turn === t).length;
+  $("#ern-tiles").innerHTML = [
+    { label: "영업이익 합 (전년 같은 분기 대비)", value: S ? fmtPct(S.yoy, 0) : "–", cls: S ? signCls(S.yoy) : "", delta: S ? `${krw(S.op)} ← ${krw(S.op_p)}` : "" },
+    { label: "영업이익이 늘어난 회사", value: S ? Math.round(S.up * 100) + "%" : "–", delta: S ? `${S.n.toLocaleString("ko-KR")}개 중` : "" },
+    { label: "흑자 전환 · 적자 전환", value: `${cnt("흑자전환")} · ${cnt("적자전환")}`, delta: `적자 지속 ${cnt("적자지속")}` },
+  ].map((t) => `<div class="tile"><div class="label">${esc(t.label)}</div><div class="value ${t.cls || ""}">${esc(t.value)}</div><div class="delta">${esc(t.delta)}</div></div>`).join("");
+  const bs = Object.entries(ERN.by_sector).filter(([n]) => n !== "기타").map(([n, v]) => ({ n, d: (v.op - v.op_p) / 1e12, v }))
+    .sort((a, b) => b.d - a.d);
+  const pick = [...bs.slice(0, 7), ...bs.slice(-5).filter((x) => !bs.slice(0, 7).includes(x))];
+  divergingBars($("#ch-ern-sec"), pick.map((x) => ({ label: x.n, value: x.d, tip: [{ label: "영업이익", value: krw(x.v.op) }, { label: "전년 같은 분기", value: krw(x.v.op_p) },
+    { label: "증감률", value: fmtPct(x.v.yoy, 0) }, { label: "늘어난 회사", value: Math.round(x.v.up * 100) + "%" }] })),
+    { minLim: 0.5, labelW: 110, vfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "조", aria: "업종별 영업이익 증감" });
+  let L = rows.filter((r) => (r.mcap ?? 0) >= ERN_CAP);
+  // 증가율·감소율은 전년 같은 분기 영업이익 10억 원 이상만 (기저가 너무 작으면 수천 % 가 나온다)
+  if (ERN_LIST === "growth") L = L.filter((r) => r.op_yoy != null && r.op > 0 && r.op_p >= 1e9).sort((a, b) => b.op_yoy - a.op_yoy);
+  else if (ERN_LIST === "decline") L = L.filter((r) => r.op_yoy != null && r.op_p >= 1e9).sort((a, b) => a.op_yoy - b.op_yoy);
+  else if (ERN_LIST === "big") L = L.filter((r) => r.op != null && r.op_p != null).sort((a, b) => (b.op - b.op_p) - (a.op - a.op_p));
+  else L = L.filter((r) => r.turn === (ERN_LIST === "turnp" ? "흑자전환" : "적자전환")).sort((a, b) => (b.mcap ?? 0) - (a.mcap ?? 0));
+  const shown = L.slice(0, 40);
+  $("#ern-table").innerHTML = `<thead><tr><th>종목</th><th>업종</th><th class="num">시총</th><th class="num">분기 매출</th><th class="num">매출 YoY</th><th class="num">분기 영업이익</th><th class="num">전년 같은 분기</th><th class="num">영업이익 YoY</th><th class="num">접수일</th></tr></thead><tbody>` +
+    (shown.map((r) => `<tr><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}${r.market === "코스닥" ? '<span class="badge">코스닥</span>' : ""}${r.turn && r.turn !== "적자지속" ? `<span class="badge">${r.turn}</span>` : ""}</td>
+      <td class="muted">${esc(r.sector)}</td><td class="num">${krw(r.mcap)}</td><td class="num">${krw(r.rev)}</td><td class="num ${signCls(r.rev_yoy)}">${fmtPct(r.rev_yoy, 0)}</td>
+      <td class="num ${signCls(r.op)}">${krwS(r.op)}</td><td class="num muted">${krwS(r.op_p)}</td><td class="num ${signCls(r.op_yoy)}">${fmtPct(r.op_yoy, 0)}</td><td class="num muted">${(r.rcept || "").slice(5)}</td></tr>`).join("")
+      || `<tr><td colspan="9" class="muted">해당 종목 없음</td></tr>`) + "</tbody>";
+  $("#ern-note").textContent = `${L.length.toLocaleString("ko-KR")}종목 중 ${shown.length}개`;
+}
+/* ---------- 시가총액 순위 변동 ---------- */
+let MR_MKT = "코스피";
+function renderMrank() {
+  const M = D.mrank;
+  if (!M || !M.markets) { $("#mr-sub").textContent = "데이터 없음"; return; }
+  $("#mr-sub").textContent = `${KDATE(M.asof)} 기준 상위 50 · 1주 전 ${KDATE(M.dates.w1)} · 1개월 전 ${KDATE(M.dates.m1)}`;
+  const mv = (now, then) => then == null ? '<span class="badge">신규</span>' : then === now ? '<span class="muted">–</span>'
+    : `<span class="${then > now ? "up" : "down"}">${then > now ? "▲" : "▼"}${Math.abs(then - now)}</span>`;
+  $("#mr-table").innerHTML = `<thead><tr><th class="rk">순위</th><th>종목</th><th class="num">1주</th><th class="num">1개월</th><th class="num">시가총액</th><th class="num">1개월 시총 변화</th></tr></thead><tbody>` +
+    M.markets[MR_MKT].map((r) => `<tr><td class="rk">${r.rank}</td><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}</td>
+      <td class="num">${mv(r.rank, r.w1 != null && r.w1 <= 50 ? r.w1 : (r.w1 ?? null))}</td><td class="num">${r.m1 != null && r.m1 > 50 ? '<span class="badge">신규</span>' : mv(r.rank, r.m1)}</td>
+      <td class="num">${krw(r.mcap)}</td><td class="num ${signCls(r.chg_m1)}">${fmtPct(r.chg_m1, 1)}</td></tr>`).join("") + "</tbody>";
+}
+/* ---------- 업종 로테이션 히트맵 ---------- */
+let MAP_VIEW = "map";
+function renderRotation() {
+  const R = D.rotation && D.rotation.markets && D.rotation.markets[MAP_MKT];
+  if (!R) { $("#rot-heat").innerHTML = '<tr><td class="muted">데이터 없음</td></tr>'; return; }
+  const lim = 0.08, neu = css("--neutral"), up = css("--up"), dn = css("--down"), ink = css("--text-primary");
+  $("#rot-heat").innerHTML = `<thead><tr><th></th>${D.rotation.weeks.map((w) => `<th>${w}</th>`).join("")}<th>4주</th></tr></thead><tbody>` +
+    R.sectors.map((sname, i) => {
+      const v = R.ret[i], c4 = v.slice(-4).reduce((a, x) => a * (1 + (x || 0)), 1) - 1;
+      const cell = (x) => { if (x == null) return "<td></td>"; const t = Math.min(1, Math.abs(x) / lim);
+        return `<td style="background:${mix(neu, x >= 0 ? up : dn, t)};color:${t > 0.55 ? "#ffffff" : ink}">${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x * 100).toFixed(1)}</td>`; };
+      return `<tr><th class="rowh">${esc(sname)} <span class="muted" style="font-weight:400">${(R.weight[i] * 100).toFixed(1)}%</span></th>${v.map(cell).join("")}${cell(c4)}</tr>`;
+    }).join("") + "</tbody>";
+}
+function renderMapCard() {
+  $("#map-main").hidden = MAP_VIEW !== "map"; $("#rot-wrap").hidden = MAP_VIEW !== "rot";
+  $("#map-per").hidden = MAP_VIEW !== "map"; $("#map-scale").hidden = MAP_VIEW !== "map";
+  if (MAP_VIEW === "map") renderMap();
+  else { renderRotation(); $("#map-sub").textContent = `${MAP_MKT} 업종별 주간 수익률 · 최근 12주 · ${KDATE(D.status.rows[0].last)} 종가까지`; }
+}
+/* ---------- 다가오는 일정 ---------- */
+function renderCalendar() {
+  const E = D.calendar || [];
+  const WD = ["일", "월", "화", "수", "목", "금", "토"];
+  $("#home-divs").innerHTML = E.length ? E.map((e) => {
+    const d = new Date(e.date);
+    const tag = { 휴장: "n", 만기: "", 지수: "", 공시: "", 배당: "p" }[e.kind] ?? "";
+    return `<li><span class="dt">${e.date.slice(5).replace("-", ".")} ${WD[d.getDay()]}</span><span class="tone ${tag}" style="flex:none">${esc(e.kind)}</span>
+      <span class="tt">${e.code ? `<a href="#stock:${e.code}">${esc(e.title)}</a>` : esc(e.title)}</span>${e.note ? `<span class="muted" style="font-size:12px">${esc(e.note)}</span>` : ""}</li>`;
+  }).join("") : `<li class="muted">앞으로 45일 안에 등록된 일정이 없다</li>`;
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1963,7 +2077,9 @@ function renderMarket() {
   add("KOSPI200", css("--series-1"), "KOSPI200");
   add("069500", css("--series-2"), "KODEX200");
   legend($("#lg-market"), S);
-  lineChart($("#ch-market"), S, { yfmt: (v) => v.toFixed(0), endLabels: true, aria: "KOSPI200과 KODEX200 누적" });
+  const heads = new Map((D.notes || []).filter((n) => n.category === "일간 리서치" && n.headline).map((n) => [n.date, n.headline]));
+  lineChart($("#ch-market"), S, { yfmt: (v) => v.toFixed(0), endLabels: true, aria: "KOSPI200과 KODEX200 누적",
+    tipExtra: (d) => heads.has(d) ? [{ label: "리서치", value: heads.get(d).length > 34 ? heads.get(d).slice(0, 33) + "…" : heads.get(d) }] : [] });
   const k = sliceRange(D.market.KOSPI200?.points || []);
   let peak = -Infinity;
   const dd = k.map((p) => { peak = Math.max(peak, p[1]); return [p[0], (p[1] / peak - 1) * 100]; });
@@ -2185,10 +2301,10 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { earnings: () => renderEarnings(), mrank: () => renderMrank(), screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
-const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "market"];
+const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "earnings", "mrank", "market"];
 let LAB_LAST = "research", MKT_LAST = "flows";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
 try { const v = localStorage.getItem("kq-mkt"); if (MKT.includes(v)) MKT_LAST = v; } catch (e) {}
@@ -2310,8 +2426,13 @@ tabBtns.forEach((b, i) => {
 document.querySelectorAll("#subnav button, #subnav-mkt button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 $("#rank-more").addEventListener("click", () => { RANK_ALL = !RANK_ALL; renderRank(); });
+seg($("#map-view"), [["map", "지도"], ["rot", "12주 흐름"]], () => MAP_VIEW, (v) => { MAP_VIEW = v; renderMapCard(); });
+seg($("#ern-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => ERN_MKT, (v) => { ERN_MKT = v; renderEarnings(); });
+seg($("#ern-list"), [["big", "증가액 상위"], ["growth", "증가율 상위"], ["turnp", "흑자 전환"], ["turnm", "적자 전환"], ["decline", "감소율 상위"]], () => ERN_LIST, (v) => { ERN_LIST = v; renderEarnings(); });
+seg($("#ern-cap"), [[0, "시총 전체"], [1e11, "1천억+"], [1e12, "1조+"]], () => ERN_CAP, (v) => { ERN_CAP = +v; renderEarnings(); });
+seg($("#mr-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => MR_MKT, (v) => { MR_MKT = v; renderMrank(); });
 seg($("#map-per"), MAP_PERS, () => MAP_PER, (v) => { MAP_PER = v; renderMap(); });
-seg($("#map-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => MAP_MKT, (v) => { MAP_MKT = v; MAP_SEC = null; renderMap(); });
+seg($("#map-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => MAP_MKT, (v) => { MAP_MKT = v; MAP_SEC = null; renderMapCard(); });
 seg($("#rank-sort"), RANK_SORTS, () => RANK_SORT, (v) => { RANK_SORT = v; renderRank(); });
 seg($("#rank-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"], ["ETF", "ETF"]], () => RANK_MKT, (v) => { RANK_MKT = v; renderRank(); });
 showTab(location.hash.slice(1) || "home");
