@@ -246,7 +246,8 @@ def recent_filings(names: dict, days: int = 7, n: int = 10) -> list[dict]:
     cur = set(membership.current_members())
     dl = dl[dl["stock_code"].isin(cur)].copy()
     dl["cat"] = dl["report_nm"].map(dart.classify)
-    routine = dl["report_nm"].str.contains(r"일괄신고|파생결합|투자설명서|증권신고서\(채무증권", regex=True)
+    from src.filings import is_routine
+    routine = dl["report_nm"].map(is_routine)
     dl = dl[dl["cat"].isin(KEY_FILINGS) & ~routine].sort_values(["rcept_dt", "rcept_no"], ascending=False)
     dl = dl.drop_duplicates(["rcept_dt", "stock_code", "report_nm"]).head(n)
     return [{"date": f"{r.rcept_dt:%Y-%m-%d}", "code": r.stock_code, "name": names.get(r.stock_code, r.corp_name),
@@ -393,6 +394,27 @@ def map_section(log, top: int = 300) -> dict:
                    "n_all": int(len(snap)), "rows": rows}
         log.info("업종 지도 %s: %d종목, 시총 %.1f%% (%s)", mk, len(rows), 100 * out[mk]["coverage"], f"{asof:%Y-%m-%d}")
     return out
+
+
+def filings_section(log, days: int = 31) -> dict:
+    """공시 피드: 최근 days 일 DART 유가증권 공시 전체 → outputs/filings.js (탭을 열 때 불러온다)."""
+    from src import filings
+    from src.data import dart
+
+    start = pd.Timestamp.today().normalize() - pd.Timedelta(days=days)
+    dl = dart.load_all(start=start)
+    if dl.empty:
+        return {}
+    cal = krx_daily.saved_days("stk")
+    fl = filings.fluc_map(krx_daily.load_snapshots("stk", start=start - pd.Timedelta(days=7)))
+    out = filings.build(dl, [d for d in cal if d >= start - pd.Timedelta(days=7)], fl,
+                        set(membership.current_members()), membership.load_names())
+    meta = {"from": f"{dl['rcept_dt'].min():%Y-%m-%d}", "to": f"{dl['rcept_dt'].max():%Y-%m-%d}",
+            "price_asof": f"{cal[-1]:%Y-%m-%d}" if cal else None}
+    filings.write(config.OUTPUTS / "filings.js", out, meta)
+    n_routine = sum(r[5] for r in out["rows"])
+    log.info("공시 피드 %d건 (일상 신고 %d건, %s~%s)", len(out["rows"]), n_routine, meta["from"], meta["to"])
+    return {**meta, "n": len(out["rows"])}
 
 
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
@@ -566,6 +588,7 @@ def main(argv=None) -> int:
             "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
             "regime": regime_section(log), "quality": quality_section(log), "home": home_section(log)}
     data["map"] = map_section(log)
+    data["filings"] = filings_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
