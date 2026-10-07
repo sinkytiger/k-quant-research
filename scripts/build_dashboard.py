@@ -470,6 +470,40 @@ def flows_board_section(log) -> dict:
 
 
 _PX: dict = {}
+_BAND: dict = {}
+
+
+def band_prepare(codes: list[str]) -> None:
+    """종목 상세 PER·PBR 밴드: 시점 맞춘 TTM 순이익·자본(fin_factor_v1 과 같은 규칙) → 수정주가 기준 주당 값."""
+    if "C" not in _BAND or "eps" in _BAND:
+        return
+    from src.data import dart_fin
+    from src.features import fundamental as fu
+
+    C, cap = _BAND["C"], _BAND["cap"]
+    cols = [c for c in codes if c in C.columns]
+    fin = dart_fin.load_all()
+    fin = fin[fin["stock_code"].isin(cols)]
+    if fin.empty:
+        _BAND.update(eps=pd.DataFrame(), bps=pd.DataFrame())
+        return
+    sp = fu.step_panels(fu.known_table(fin), C.index, cols)
+    shares = cap[cols].where(cap[cols] > 0) / C[cols]  # 수정주가 기준 주식 수
+    _BAND.update(eps=sp["ni_ttm"] / shares, bps=sp["equity"].where(sp["equity"] > 0) / shares)
+
+
+def band_block(code: str, step: int = 5) -> dict:
+    """주 단위(5거래일) [날짜, 종가, EPS, BPS] — 화면에서 배수 선을 그린다."""
+    eps, bps = _BAND.get("eps"), _BAND.get("bps")
+    if eps is None or eps.empty or code not in eps.columns:
+        return {}
+    C = _BAND["C"][code]
+    idx = C.index[::-1][::step][::-1]  # 마지막 날을 꼭 넣는다
+    r2 = lambda x: None if x != x else round(float(x), 2)  # noqa: E731
+    e, b, c = eps[code].reindex(idx), bps[code].reindex(idx), C.reindex(idx)
+    if e.notna().sum() < 10 and b.notna().sum() < 10:
+        return {}
+    return {"d": [f"{x:%y%m%d}" for x in idx], "c": [r2(x) for x in c], "eps": [r2(x) for x in e], "bps": [r2(x) for x in b]}
 
 
 def price_stats(H: pd.DataFrame, L: pd.DataFrame, C: pd.DataFrame) -> dict:
@@ -507,6 +541,7 @@ def highlow_section(log, hist_days: int = 250) -> dict:
     tidy = tidy[tidy["code"].isin(common)]
     d = hl.adjusted(tidy)
     H, L, C = (d.pivot(index="Date", columns="code", values=v) for v in ("aH", "aL", "aC"))
+    _BAND.update(C=C, cap=d.pivot(index="Date", columns="code", values="MarketCap").reindex_like(C))
     hi, lo, pmax, pmin = hl.flags(H, L)
     _PX.update(price_stats(H, L, C))
     try:
@@ -658,6 +693,7 @@ def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     cur = set(membership.current_members())
     codes = sorted(cur | {r["code"] for r in home.get("rows", []) if r.get("market") != "ETF"} | (extra or set()))
     names = membership.load_names()
+    band_prepare(codes)
     dl = dart.load_all(start=pd.Timestamp.today().normalize() - pd.DateOffset(months=6))
     dl = dl[dl["stock_code"].str.len() == 6]
     by_code = dict(tuple(dl.groupby("stock_code")))
@@ -673,7 +709,8 @@ def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
         payloads[c] = {"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
                        "asof": f"{asof:%Y-%m-%d}", "mcap": info["mcap"], "stats": st, "candles": sd.ohlcv(px),
                        "flows": sd.flow_block(flows.load(c)), "news": sd.news_block(news.load(c)),
-                       "dart": sd.dart_block(by_code.get(c, pd.DataFrame())), "div": div, "fin": fin_block(c)}
+                       "dart": sd.dart_block(by_code.get(c, pd.DataFrame())), "div": div, "fin": fin_block(c),
+                       "band": band_block(c)}
         index.append({"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
                       "mcap": info["mcap"]})
     n = sd.write_all(config.OUTPUTS / "stocks", clean(payloads))

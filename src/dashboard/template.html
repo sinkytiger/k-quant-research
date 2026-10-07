@@ -1223,6 +1223,10 @@ function drawStock(S) {
           : `<div class="note">${S.market === "코스피" ? "최근 6개월 공시 없음" + (insider ? ` (임원·주요주주 소유 보고 ${insider}건 제외)` : "") : "공시 목록은 유가증권(코스피)만 받는다"}</div>`}
       </div>
     </div>
+    ${S.band && S.band.d ? `<div class="card"><div class="card-h"><div class="sub" id="band-sub"></div><div class="rank-tabs row" id="band-mode" role="group" aria-label="밴드 종류"></div></div>
+      <div class="legend" id="lg-band"></div><div class="chart" id="ch-band"></div>
+      <div class="note">점선 = 그 배수였다면의 주가 (배수 × 그때 알던 주당순이익·주당순자산), 주가 최고치의 1.8배 위는 자름. 실적은 보고서 접수 다음 거래일부터 반영(시점 맞춤), 수정주가 기준, 주 단위.
+        TTM 순이익은 비지배지분 포함. 적자 구간은 PER 밴드가 비고, 자본잠식이면 PBR 밴드가 빈다.</div></div>` : ""}
     ${(() => {
       const F = S.fin || {};
       if (!F.hist || !F.hist.length) return `<div class="card"><div class="sub">실적·밸류에이션</div><div class="note">DART 재무 데이터 없음</div></div>`;
@@ -1236,6 +1240,7 @@ function drawStock(S) {
           <td class="num">${rv && op != null ? fmtPct(op / rv) : "–"}</td></tr>`).join("")}</tbody></table></div>`;
     })()}
     <div class="note">표시용 정보이며 매매 권유가 아니다.</div>`;
+  if (S.band && S.band.d) drawBand(S);
   seg($("#stk-range"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => STK_RANGE, (v) => { STK_RANGE = +v; candleChart($("#ch-stk"), S.candles.slice(-STK_RANGE)); });
   candleChart($("#ch-stk"), S.candles.slice(-STK_RANGE));
   if (f.dates) {
@@ -1246,6 +1251,43 @@ function drawStock(S) {
     lineChart($("#ch-stk-flow"), FS, { height: 200, yfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v)).toLocaleString("ko-KR"), endLabels: true,
       refs: [{ y: 0, label: "0" }], aria: "투자자별 순매수 누적" });
   }
+}
+let BAND_MODE = "per";
+const BAND_STEPS = { per: [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 150],
+                     pbr: [0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 15, 20] };
+function pickMultiples(hist, steps) {
+  const h = hist.filter((x) => x > 0 && isFinite(x)).sort((a, b) => a - b);
+  if (h.length < 5) return [];
+  const q = (p) => h[Math.min(h.length - 1, Math.max(0, Math.round(p * (h.length - 1))))];
+  const lo = q(0.05) * 0.85, hi = q(0.95) * 1.15;
+  let m = steps.filter((x) => x >= lo && x <= hi);
+  if (m.length < 3) { const mid = q(0.5); m = [...steps].sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid)).slice(0, 3).sort((a, b) => a - b); }
+  if (m.length > 5) m = [...new Set([0, 1, 2, 3, 4].map((k) => m[Math.round(k * (m.length - 1) / 4)]))];  // 고르게 5개
+  return m;
+}
+function drawBand(S) {
+  const B = S.band, toISO = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`;
+  const per = BAND_MODE === "per", base = per ? B.eps : B.bps;
+  const ratio = B.c.map((c, i) => (base[i] > 0 && c ? c / base[i] : null));
+  const mult = pickMultiples(ratio, BAND_STEPS[BAND_MODE]);
+  const now = ratio.at(-1), hist = ratio.filter((x) => x != null).sort((a, b) => a - b);
+  const pos = now != null && hist.length ? hist.filter((x) => x <= now).length / hist.length : null;
+  const nm = per ? "PER" : "PBR";
+  $("#band-sub").textContent = `${nm} 밴드 · 최근 2년 · 지금 ${now == null ? (per ? "적자" : "–") : now.toFixed(per ? 1 : 2) + "배"}` +
+    (pos == null ? "" : ` (2년 범위의 ${Math.round(pos * 100)}% 위치${pos >= 0.8 ? ", 비싼 편" : pos <= 0.2 ? ", 싼 편" : ""})`);
+  seg($("#band-mode"), [["per", "PER"], ["pbr", "PBR"]], () => BAND_MODE, (v) => { BAND_MODE = v; drawBand(S); });
+  const ser = [{ name: "주가", short: "주가", color: css("--series-1"), points: B.d.map((d, i) => [toISO(d), B.c[i]]).filter((p) => p[1] != null) }];
+  // 배수 선이 너무 높아 주가가 눌리지 않게: 마지막 값이 주가 최고치의 1.8배를 넘는 배수는 그리지 않고, 나머지도 그 위는 자른다
+  const cap = Math.max(...B.c.filter((x) => x != null)) * 1.8;
+  const lastBase = [...base].reverse().find((x) => x > 0);
+  const shown = mult.filter((m) => !lastBase || lastBase * m <= cap);
+  shown.forEach((m, i) => {
+    const t = shown.length > 1 ? i / (shown.length - 1) : 0.5;
+    ser.push({ name: `${nm} ${m}배`, short: `${m}배`, color: mix(css("--axis"), css("--series-2"), 0.25 + 0.75 * t), dash: "4 3",
+      points: B.d.map((d, j) => [toISO(d), base[j] > 0 && base[j] * m <= cap ? base[j] * m : null]).filter((p) => p[1] != null) });
+  });
+  legend($("#lg-band"), ser);
+  lineChart($("#ch-band"), ser.filter((x) => x.points.length > 1), { height: 260, yfmt: (v) => Math.round(v).toLocaleString("ko-KR"), endLabels: true, aria: `${nm} 밴드` });
 }
 function openStock(code) {
   STK_CODE = code;
