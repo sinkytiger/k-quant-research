@@ -39,3 +39,27 @@ def test_scan_public_private_and_cleanup(tmp_path):
     (src / "비공개.pdf").unlink()
     rows = notes.scan(src, out, {})
     assert len(rows) == 1 and not any("비공개" in f.name for f in out.iterdir())
+
+
+def test_weekly_name_title_date_category():
+    assert notes.parse_name("2026-10_1주차_주간리서치") == (None, "10월 1주차 주간리서치")
+    assert notes.clean_title("Microsoft Word - 반도체 메모.docx") == "반도체 메모"
+    assert notes.clean_title("untitled") is None
+    assert notes.last_date("주간 리서치 — 2026-09-28 ~ 2026-10-02") == "2026-10-02"
+    assert notes.category("public/주간 리서치/a.pdf") == "주간 리서치"
+    assert notes.category("일간 리서치/a.pdf") == "일간 리서치"
+    assert notes.category("a.pdf") == "기타"
+
+
+def test_import_sources_copies_new_only(tmp_path):
+    root, nd = tmp_path / "proj", tmp_path / "proj" / "notes"
+    src = tmp_path / "src" / "2026" / "10"
+    src.mkdir(parents=True)
+    nd.mkdir(parents=True)
+    (src / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    (nd / "sources.json").write_text('{"sources": [{"from": "../src", "to": "주간 리서치"}]}', encoding="utf-8")
+    assert notes.import_sources(nd, root) == 1
+    assert (nd / "주간 리서치" / "a.pdf").exists()
+    assert notes.import_sources(nd, root) == 0  # 이미 있으면 건너뜀
+    (src / "a.pdf").unlink()
+    assert notes.import_sources(nd, root) == 0 and (nd / "주간 리서치" / "a.pdf").exists()  # 원본을 지워도 남는다

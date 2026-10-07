@@ -375,6 +375,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div><h2>분석 노트</h2><div class="sub" id="notes-sub"></div></div>
       <input class="search" id="notes-q" placeholder="제목·요약·종목 검색" aria-label="노트 검색" style="width:220px">
     </div>
+    <div class="chips" id="notes-cats" role="group" aria-label="분류"></div>
     <div class="notes" id="notes"></div>
   </section>
 
@@ -1272,11 +1273,18 @@ function renderFilings() {
     표시용 정보이며 매매 권유가 아니다.`;
 }
 /* ---------- 분석 노트 (notes/ 의 PDF) ---------- */
+let NOTE_CAT = "";
 function renderNotes() {
   const N = D.notes || [];
+  const cats = new Map();
+  for (const n of N) cats.set(n.category || "기타", (cats.get(n.category || "기타") || 0) + 1);
+  if (NOTE_CAT && !cats.has(NOTE_CAT)) NOTE_CAT = "";
+  $("#notes-cats").innerHTML = cats.size > 1 ? `<button type="button" data-c="" aria-pressed="${!NOTE_CAT}">전체<span class="n">${N.length}</span></button>` +
+    [...cats.entries()].sort((a, b) => b[1] - a[1]).map(([c, k]) => `<button type="button" data-c="${esc(c)}" aria-pressed="${NOTE_CAT === c}">${esc(c)}<span class="n">${k}</span></button>`).join("") : "";
+  $("#notes-cats").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { NOTE_CAT = b.dataset.c; renderNotes(); }));
   const q = ($("#notes-q").value || "").trim();
   const nm = (c) => (STOCKS.find((s) => s.code === c) || {}).name || c;
-  const rows = N.filter((n) => !q || n.title.includes(q) || (n.summary || "").includes(q) || n.stocks.some((c) => nm(c).includes(q) || c.startsWith(q)));
+  const rows = N.filter((n) => (!NOTE_CAT || (n.category || "기타") === NOTE_CAT)).filter((n) => !q || n.title.includes(q) || (n.summary || "").includes(q) || n.stocks.some((c) => nm(c).includes(q) || c.startsWith(q)));
   $("#notes-sub").textContent = N.length
     ? `${N.length}개 · 공개 ${N.filter((n) => n.public).length}개 · 누르면 PDF 가 열린다 · notes/ 폴더에 PDF 를 넣고 대시보드를 새로 만들면 추가된다`
     : "notes/ 폴더에 PDF 를 넣고 대시보드를 새로 만들면 여기에 올라온다";
@@ -1289,7 +1297,7 @@ function renderNotes() {
   }
   $("#notes").innerHTML = rows.map((n) => `<a class="note-card" href="${esc(n.file)}" target="_blank" rel="noopener">
       <div class="th" style="${n.thumb ? `background-image:url('${esc(n.thumb)}')` : ""}">${n.thumb ? "" : "PDF"}</div>
-      <div><div class="meta">${n.date} · ${n.pages ? n.pages + "쪽" : "쪽수 모름"} · ${n.kb.toLocaleString("ko-KR")}KB ·
+      <div><div class="meta">${esc(n.category || "기타")} · ${n.date} · ${n.pages ? n.pages + "쪽" : "쪽수 모름"} · ${n.kb.toLocaleString("ko-KR")}KB ·
         ${n.public ? '<span class="tone p" style="border-color:var(--good);color:var(--good-text)">공개</span>' : '<span class="tone">비공개</span>'}</div>
         <h3>${esc(n.title)}</h3>
         ${n.summary ? `<div class="sum">${esc(n.summary)}</div>` : '<div class="sum muted">본문 글자를 읽지 못했다 (스캔 이미지 PDF 일 수 있다)</div>'}

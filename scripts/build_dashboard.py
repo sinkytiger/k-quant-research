@@ -421,6 +421,9 @@ def notes_section(log) -> list[dict]:
     """분석 노트: notes/ 의 PDF 목록 (outputs/notes/ 로 복사·미리보기 생성)."""
     from src import notes
 
+    n = notes.import_sources(config.ROOT / "notes", config.ROOT, log)
+    if n:
+        log.info("노트 원본 폴더에서 새 PDF %d개 가져옴", n)
     rows = notes.scan(config.ROOT / "notes", config.OUTPUTS / "notes", membership.load_names())
     log.info("분석 노트 %d개 (공개 %d)", len(rows), sum(r["public"] for r in rows))
     return rows

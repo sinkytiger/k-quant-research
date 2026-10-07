@@ -15,11 +15,16 @@ from datetime import datetime
 from pathlib import Path
 
 NAME_RE = re.compile(r"^(\d{4})[-.]?(\d{2})[-.]?(\d{2})[ _\-]+(.+)$")
+WEEK_RE = re.compile(r"^(\d{4})-(\d{2})_(\d)주차[ _\-]+(.+)$")  # 2026-10_1주차_주간리서치
+DATE_IN = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
 
 def parse_name(stem: str) -> tuple[str | None, str]:
     """'2026-10-07_반도체 업황' → ('2026-10-07', '반도체 업황'). 날짜가 없으면 (None, 이름)."""
+    w = WEEK_RE.match(stem.strip())
+    if w:
+        return None, f"{int(w.group(2))}월 {w.group(3)}주차 {w.group(4).replace('_', ' ').strip()}"
     m = NAME_RE.match(stem.strip())
     if not m:
         return None, stem.replace("_", " ").strip()
@@ -29,6 +34,57 @@ def parse_name(stem: str) -> tuple[str | None, str]:
     except ValueError:
         return None, stem.replace("_", " ").strip()
     return f"{y}-{mo}-{d}", rest.replace("_", " ").strip()
+
+
+def clean_title(t: str | None) -> str | None:
+    """PDF 정보의 제목. 'Microsoft Word - ' 같은 접두어를 떼고, 쓸 만하지 않으면 None."""
+    t = re.sub(r"^(Microsoft (Word|PowerPoint|Excel) - |제목 없음)", "", (t or "").strip()).strip()
+    t = re.sub(r"\.(docx?|pptx?|xlsx?|hwp|pdf)$", "", t, flags=re.I)
+    return t if 2 <= len(t) <= 80 and t.lower() not in ("untitled", "document") else None
+
+
+def last_date(t: str | None) -> str | None:
+    ds = [f"{y}-{m}-{d}" for y, m, d in DATE_IN.findall(t or "")]
+    return ds[-1] if ds else None
+
+
+def category(rel: str) -> str:
+    """notes/ 아래 첫 폴더 이름 (public/ 은 건너뛴다). 맨 위에 둔 파일은 '기타'."""
+    parts = rel.split("/")[:-1]
+    if parts and parts[0] == "public":
+        parts = parts[1:]
+    return parts[0] if parts else "기타"
+
+
+def import_sources(notes_dir: Path, root: Path, log=None) -> int:
+    """notes/sources.json 에 적은 폴더의 새 PDF 를 notes/<to>/ 로 복사한다. 원본이 지워져도 노트는 남긴다.
+
+    {"sources": [{"from": "../데이터크롤링/output/리서치모음/주간장마감", "to": "주간 리서치", "glob": "**/*.pdf"}]}
+    from 은 K-quant 폴더 기준 상대 경로 또는 절대 경로.
+    """
+    import json
+
+    cfg = notes_dir / "sources.json"
+    if not cfg.exists():
+        return 0
+    n = 0
+    for src in json.loads(cfg.read_text(encoding="utf-8")).get("sources", []):
+        base = (root / src["from"]).resolve()
+        if not base.exists():
+            if log:
+                log.warning("노트 원본 폴더 없음: %s", base)
+            continue
+        dest = notes_dir / src["to"]
+        for f in sorted(base.glob(src.get("glob", "**/*.pdf"))):
+            if not f.is_file():
+                continue
+            out = dest / f.name
+            if out.exists() and out.stat().st_mtime >= f.stat().st_mtime and out.stat().st_size == f.stat().st_size:
+                continue
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, out)
+            n += 1
+    return n
 
 
 def summarize(text: str, n: int = 220) -> str:
@@ -122,10 +178,10 @@ def scan(notes_dir: Path, out_dir: Path, names: dict[str, str]) -> list[dict]:
         keep.update({dst.name, png.name})
         rows.append({
             "id": nid, "file": f"notes/{dst.name}", "thumb": f"notes/{png.name}" if has_png else None,
-            "title": title if date or not info["title"] else info["title"],
-            "date": date or datetime.fromtimestamp(pdf.stat().st_mtime).strftime("%Y-%m-%d"),
+            "title": clean_title(info["title"]) or title,
+            "date": date or last_date(info["title"]) or datetime.fromtimestamp(pdf.stat().st_mtime).strftime("%Y-%m-%d"),
             "pages": info["pages"], "kb": round(pdf.stat().st_size / 1024),
-            "public": rel.split("/")[0] == "public", "folder": str(Path(rel).parent.as_posix()),
+            "public": rel.split("/")[0] == "public", "category": category(rel),
             "summary": summarize(first), "stocks": find_stocks(info["text"], names),
         })
     for f in out_dir.iterdir():  # 지운 노트의 사본 정리
