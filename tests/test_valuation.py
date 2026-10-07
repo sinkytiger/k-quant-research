@@ -45,3 +45,16 @@ def test_parse_multi_uses_cumulative_for_half_and_q3():
               "account_nm": "당기순이익(손실)", "thstrm_amount": "7", "thstrm_add_amount": "9"}]
     d = f.parse_multi(items, "11012").set_index("item")["value"]
     assert d["revenue"] == 305 and d["equity"] == 1000 and d["ni"] == 9 and len(d) == 3
+
+
+def test_parse_corpcode_alphanumeric_codes_do_not_shift():
+    xml = ("<result>"
+           "<list><corp_code>01906598</corp_code><corp_name>하나35호스팩</corp_name><corp_eng_name>x</corp_eng_name>"
+           "<stock_code>0041L0</stock_code><modify_date>20260101</modify_date></list>"
+           "<list><corp_code>00999999</corp_code><corp_name>비상장</corp_name><corp_eng_name>y</corp_eng_name>"
+           "<stock_code> </stock_code><modify_date>20260101</modify_date></list>"
+           "<list><corp_code>00148540</corp_code><corp_name>CJ</corp_name><corp_eng_name>z</corp_eng_name>"
+           "<stock_code>001040</stock_code><modify_date>20260101</modify_date></list></result>")
+    df = f.parse_corpcode(xml).set_index("stock_code")
+    assert df.loc["001040", "corp_code"] == "00148540" and df.loc["0041L0", "corp_code"] == "01906598"
+    assert len(df) == 2
