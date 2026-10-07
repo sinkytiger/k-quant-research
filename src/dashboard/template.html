@@ -263,6 +263,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <button role="tab" data-tab="home" aria-controls="s-home">홈</button>
     <button role="tab" data-tab="stock" aria-controls="s-stock">종목</button>
     <button role="tab" data-tab="filings" aria-controls="s-filings">공시</button>
+    <button role="tab" data-tab="flows" aria-controls="s-flows">수급</button>
     <button role="tab" data-tab="etf" aria-controls="s-etf">ETF</button>
     <button role="tab" data-tab="lab" aria-controls="s-research">연구</button>
     <button role="tab" data-tab="overview" aria-controls="s-overview">데이터</button>
@@ -377,6 +378,35 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     </div>
     <div class="chips" id="notes-cats" role="group" aria-label="분류"></div>
     <div class="notes" id="notes"></div>
+  </section>
+
+  <section id="s-flows" role="tabpanel" data-tab="flows">
+    <div class="card-h">
+      <div><h2>수급</h2><div class="sub" id="fb-sub"></div></div>
+      <div class="rank-tabs row" id="fb-mkt" role="group" aria-label="시장"></div>
+    </div>
+    <div class="tiles" id="fb-tiles" style="margin-top:4px"></div>
+    <div class="card">
+      <div class="card-h"><div class="sub">투자자별 누적 순매수 (조원, 시장 전체)</div><div class="rank-tabs row" id="fb-per" role="group" aria-label="기간"></div></div>
+      <div class="legend" id="lg-fb"></div>
+      <div class="chart" id="ch-fb"></div>
+    </div>
+    <div class="ctl-row">
+      <div class="rank-tabs row" id="fb-inv" role="group" aria-label="투자자"></div>
+      <div class="rank-tabs row" id="fb-win" role="group" aria-label="기간"></div>
+      <div class="rank-tabs row" id="fb-dir" role="group" aria-label="방향"></div>
+      <div class="rank-tabs row" id="fb-sort" role="group" aria-label="정렬"></div>
+    </div>
+    <div class="home-main" style="grid-template-columns: 1.55fr 1fr">
+      <div class="card scroll"><table id="fb-table"></table><div class="note" id="fb-note"></div></div>
+      <div>
+        <div class="card" style="margin-top:0"><div class="sub" id="fb-st-sub" style="margin-bottom:6px"></div><div class="grid2" style="gap:16px" id="fb-streak"></div></div>
+        <div class="card"><div class="sub" id="fb-sec-sub"></div><div class="chart" id="ch-fb-sec"></div></div>
+      </div>
+    </div>
+    <div class="note">KIS 투자자별 매매(확정치). 종목 표·업종은 유니버스(코스피 시총 상위 200)만, 위 차트·타일은 시장 전체.
+      시총 대비 = 기간 순매수 ÷ 시가총액. 쌍끌이 = 외국인과 기관이 같은 기간에 함께 순매수(또는 순매도). 연구 탭 IC 에서 수급 피처는 약한 신호였고
+      단독 롱온리 전략은 게이트를 넘지 못했다. 매매 권유가 아니다.</div>
   </section>
 
   <section id="s-filings" role="tabpanel" data-tab="filings">
@@ -1306,6 +1336,62 @@ function renderNotes() {
       </div></a>`).join("") || `<div class="note">검색 결과 없음</div>`;
   $("#notes").querySelectorAll("[data-stock]").forEach((t) => t.addEventListener("click", (e) => { e.preventDefault(); openStock(t.dataset.stock); }));
 }
+/* ---------- 수급 탭 ---------- */
+let FB_MKT = "코스피", FB_PER = 120, FB_INV = "frgn", FB_WIN = 5, FB_DIR = "buy", FB_SORT = "amt";
+const FB_INVS = [["frgn", "외국인"], ["inst", "기관"], ["both", "쌍끌이"], ["indiv", "개인"], ["corp", "기타법인"]];
+const krw = (v) => v == null ? "–" : (Math.abs(v) >= 1e12 ? (v / 1e12).toFixed(2) + "조" : Math.round(v / 1e8).toLocaleString("ko-KR") + "억");
+const krwS = (v) => v == null ? "–" : sgn(v) + krw(Math.abs(v));
+function renderFlowBoard() {
+  const F = D.flowboard;
+  if (!F || !F.rows) { $("#fb-sub").textContent = "수급 데이터 없음"; return; }
+  const M = F.market[FB_MKT];
+  $("#fb-sub").textContent = `${KDATE(F.asof)} 확정치까지 · 종목 표는 유니버스 200종목 · 시장 차트는 ${FB_MKT} 전체`;
+  // 시장 타일
+  if (M) {
+    const n = M.dates.length, sum = (k, w) => M[k].slice(n - w).reduce((a, b) => a + (b || 0), 0);
+    $("#fb-tiles").innerHTML = [["외국인", "외국인"], ["기관", "기관"], ["개인", "개인"]].map(([k, l]) => {
+      const d1 = M[k][n - 1];
+      return `<div class="tile"><div class="label">${FB_MKT} ${l} · ${KDATE(M.dates[n - 1])}</div><div class="value ${signCls(d1)}">${krwS(d1)}</div>
+        <div class="delta">5일 <span class="${signCls(sum(k, 5))}">${krwS(sum(k, 5))}</span> · 20일 <span class="${signCls(sum(k, 20))}">${krwS(sum(k, 20))}</span></div></div>`;
+    }).join("");
+    const st = Math.max(0, n - FB_PER);
+    const S = [["외국인", "--series-1"], ["기관", "--series-2"], ["개인", "--series-3"]].map(([k, c]) => {
+      let acc = 0; return { name: k, short: k, color: css(c), points: M.dates.slice(st).map((d, i) => [d, (acc += M[k][st + i] || 0) / 1e12]) };
+    });
+    legend($("#lg-fb"), S);
+    lineChart($("#ch-fb"), S, { height: 220, yfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "조", endLabels: true, refs: [{ y: 0, label: "0" }], aria: "투자자별 누적 순매수" });
+  }
+  // 종목 순위
+  const wi = F.windows.indexOf(FB_WIN), sign = FB_DIR === "buy" ? 1 : -1;
+  const val = (r) => FB_INV === "both" ? ((r.f.frgn[wi] ?? 0) + (r.f.inst[wi] ?? 0)) : r.f[FB_INV][wi];
+  let rows = F.rows.filter((r) => {
+    if (FB_INV === "both") return (r.f.frgn[wi] ?? 0) * sign > 0 && (r.f.inst[wi] ?? 0) * sign > 0;
+    return (val(r) ?? 0) * sign > 0;
+  }).map((r) => ({ ...r, v: val(r), pc: r.mcap ? val(r) / r.mcap : null }));
+  rows.sort((a, b) => FB_SORT === "amt" ? sign * (b.v - a.v) : sign * ((b.pc ?? 0) - (a.pc ?? 0)));
+  rows = rows.slice(0, 20);
+  const invName = FB_INVS.find((x) => x[0] === FB_INV)[1], dirName = FB_DIR === "buy" ? "순매수" : "순매도";
+  const stTxt = (r) => FB_INV === "both" ? `외 ${Math.max(0, r.st.frgn * sign)} · 기 ${Math.max(0, r.st.inst * sign)}` : (r.st[FB_INV] * sign > 0 ? Math.abs(r.st[FB_INV]) + "일" : "–");
+  $("#fb-table").innerHTML = `<thead><tr><th class="rk">순위</th><th>종목</th><th>업종</th><th class="num">${invName} ${dirName}</th><th class="num">시총 대비</th><th class="num">연속</th><th class="num">${FB_WIN}일 수익률</th></tr></thead><tbody>` +
+    (rows.map((r, i) => `<tr><td class="rk">${i + 1}</td><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}</td>
+      <td class="muted">${esc(r.sector)}</td><td class="num ${signCls(r.v)}">${krwS(r.v)}</td><td class="num">${r.pc == null ? "–" : (r.pc * 100).toFixed(2) + "%"}</td>
+      <td class="num">${stTxt(r)}</td><td class="num ${signCls(r.r[wi])}">${fmtPct(r.r[wi], 1)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">해당 종목 없음</td></tr>`) + "</tbody>";
+  $("#fb-note").textContent = `${FB_WIN}일 ${invName} ${dirName} 상위 20 · ${FB_SORT === "amt" ? "금액" : "시총 대비 비율"} 순 · 연속 = 마지막 거래일까지 같은 방향이 이어진 날 수`;
+  // 연속 순매수
+  const top = (k) => F.rows.filter((r) => r.st[k] * sign > 0).sort((a, b) => sign * (b.st[k] - a.st[k])).slice(0, 8);
+  $("#fb-st-sub").textContent = `연속 ${dirName} 긴 종목 (마지막 거래일 기준)`;
+  $("#fb-streak").innerHTML = [["frgn", "외국인"], ["inst", "기관"]].map(([k, l]) => `<div><div style="font-size:12px;font-weight:600;margin-bottom:4px">${l}</div>
+    <ul class="list" style="margin:0">${top(k).map((r) => `<li style="padding:5px 0"><span class="tt">${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}</span>
+      <span class="${sign > 0 ? "up" : "down"}" style="font-weight:600">${Math.abs(r.st[k])}일</span></li>`).join("") || '<li class="muted">없음</li>'}</ul></div>`).join("");
+  // 업종별
+  const sec = new Map();
+  for (const r of F.rows) { const v = val(r); if (v == null) continue; sec.set(r.sector, (sec.get(r.sector) || 0) + v); }
+  const bars = [...sec.entries()].filter(([n]) => n !== "기타").sort((a, b) => b[1] - a[1]);
+  const pick = [...bars.slice(0, 6), ...bars.slice(-6).filter((x) => !bars.slice(0, 6).includes(x))];
+  $("#fb-sec-sub").textContent = `업종별 ${FB_INV === "both" ? "외국인+기관" : invName} 순매수 합계 · ${FB_WIN}일 (억원, 유니버스)`;
+  divergingBars($("#ch-fb-sec"), pick.map(([n, v]) => ({ label: n, value: v / 1e8, tip: [{ label: `${FB_WIN}일 ${invName}`, value: krwS(v) }] })),
+    { minLim: 1, labelW: 110, vfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v)).toLocaleString("ko-KR"), aria: "업종별 순매수" });
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1536,7 +1622,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "market", "paper", "monitor", "notes"];
@@ -1576,6 +1662,12 @@ function seg(host, items, get, set) {
 seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderRegime(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
+seg($("#fb-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => FB_MKT, (v) => { FB_MKT = v; renderFlowBoard(); });
+seg($("#fb-per"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => FB_PER, (v) => { FB_PER = +v; renderFlowBoard(); });
+seg($("#fb-inv"), FB_INVS, () => FB_INV, (v) => { FB_INV = v; renderFlowBoard(); });
+seg($("#fb-win"), [[1, "1일"], [5, "5일"], [20, "20일"], [60, "60일"]], () => FB_WIN, (v) => { FB_WIN = +v; renderFlowBoard(); });
+seg($("#fb-dir"), [["buy", "순매수"], ["sell", "순매도"]], () => FB_DIR, (v) => { FB_DIR = v; renderFlowBoard(); });
+seg($("#fb-sort"), [["amt", "금액 순"], ["pct", "시총 대비 순"]], () => FB_SORT, (v) => { FB_SORT = v; renderFlowBoard(); });
 $("#notes-q").addEventListener("input", renderNotes);
 $("#fl-q").addEventListener("input", () => { FL_LIMIT = 150; renderFilings(); });
 $("#fl-routine").addEventListener("change", () => { FL_LIMIT = 150; renderFilings(); });

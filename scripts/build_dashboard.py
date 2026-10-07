@@ -429,6 +429,46 @@ def notes_section(log) -> list[dict]:
     return rows
 
 
+def flows_board_section(log) -> dict:
+    """수급 탭: 유니버스 종목별 투자자 순매수(1·5·20·60일 합, 연속 일수, 시총 대비) + 시장별 투자자 추이."""
+    from src import flow_board as fb
+    from src.data import market_extra as mx
+    from src.panel import load_panel
+
+    cur = sorted(membership.current_members())
+    panels = {key: flows.flow_panel(cur, col) for col, key in fb.INVESTORS.items()}
+    if panels["frgn"].empty:
+        return {}
+    asof = panels["frgn"].index.max()
+    sums = {k: fb.window_sums(v) for k, v in panels.items()}
+    stk = {k: fb.streaks(v) for k, v in panels.items()}
+    close = load_panel(cur)["close"]
+    rets = fb.returns(close, asof)
+    cap = marketcap.cap_asof(asof, cur)
+    names = membership.load_names()
+    try:
+        from src.universe import kis_master
+        sec = kis_master.sectors()
+    except Exception:  # noqa: BLE001
+        sec = {}
+    r4 = lambda x: None if pd.isna(x) else round(float(x), 4)  # noqa: E731
+    rows = []
+    for c in cur:
+        rows.append({"code": c, "name": names.get(c, c), "sector": sec.get(c, "기타"),
+                     "mcap": None if pd.isna(cap.get(c)) else float(cap.get(c)),
+                     "f": {k: [None if pd.isna(sums[k].at[c, n]) else float(sums[k].at[c, n]) if c in sums[k].index else None
+                               for n in fb.WINDOWS] for k in panels},
+                     "st": {k: int(stk[k].get(c, 0)) for k in panels},
+                     "r": [r4(rets.at[c, n]) if c in rets.index else None for n in fb.WINDOWS]})
+    market = {}
+    for mkt, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
+        inv = mx.load_investor(mkt)
+        if len(inv):
+            market[label] = fb.market_series(inv)
+    log.info("수급 탭 %d종목 (%s), 시장 %s", len(rows), f"{asof:%Y-%m-%d}", list(market))
+    return {"asof": f"{asof:%Y-%m-%d}", "windows": list(fb.WINDOWS), "rows": rows, "market": market}
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -602,6 +642,7 @@ def main(argv=None) -> int:
     data["map"] = map_section(log)
     data["filings"] = filings_section(log)
     data["notes"] = notes_section(log)
+    data["flowboard"] = flows_board_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
