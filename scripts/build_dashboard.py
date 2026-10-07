@@ -762,6 +762,34 @@ def quality_section(log, window: int = 60) -> dict:
     return {"window": [f"{recent[0]:%Y-%m-%d}", f"{asof:%Y-%m-%d}"], "issues": out, "counts": counts}
 
 
+def market_valuation_section(log) -> dict:
+    """시장 전체 PER·PBR·ROE (코스피·코스닥, 주 단위, 2017-04~, 시점 맞춤)."""
+    from src import market_valuation as mv
+    from src.data import dart_fin
+    from src.features import fundamental as fu
+
+    fin = dart_fin.load_all()
+    if fin.empty:
+        return {}
+    cal = krx_daily.saved_days("stk")
+    wk = mv.weekly(cal, "2017-04-03")
+    caps = mv.caps_on(wk)
+    days = pd.DatetimeIndex([d for d in cal if d >= pd.Timestamp("2016-01-01")])
+    sp = fu.step_panels(fu.known_table(fin), days, sorted(set(caps["code"])))
+    agg = mv.aggregate(caps, sp["ni_ttm"].loc[wk], sp["equity"].loc[wk])
+    r = lambda x: None if x != x else round(float(x), 4)  # noqa: E731
+    out = {"asof": f"{wk[-1]:%Y-%m-%d}", "markets": {}}
+    for mk, g in agg.groupby("market"):
+        g = g.sort_values("Date")
+        out["markets"][mk] = {"dates": [f"{d:%Y-%m-%d}" for d in g["Date"]],
+                              **{k: [r(x) for x in g[k]] for k in ("per", "pbr", "roe", "cover")},
+                              "earn": [r(x / 1e12) for x in g["earn"]], "mcap": [r(x / 1e12) for x in g["mcap"]]}
+    last = agg[agg["Date"] == wk[-1]].set_index("market")
+    log.info("시장 PER·PBR %d주 (%s): %s", len(wk), out["asof"],
+             ", ".join(f"{m} PER {row.per:.1f} PBR {row.pbr:.2f}" for m, row in last.iterrows()))
+    return out
+
+
 def regime_section(log) -> dict:
     """시장 국면: 변동성·시장폭·200일선 위 비율·투자자별 순매수 (전체 이력 + 현재 백분위)."""
     from src import regime
@@ -850,6 +878,7 @@ def main(argv=None) -> int:
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
             "market": market(), "paper": paper_section(), "research": research(), "monitor": monitor(log), "etf": etf_section(log),
             "regime": regime_section(log), "quality": quality_section(log), "home": home_section(log)}
+    data["mval"] = market_valuation_section(log)
     data["map"] = map_section(log)
     data["filings"] = filings_section(log)
     data["notes"] = notes_section(log)

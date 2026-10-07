@@ -564,6 +564,18 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="chart" id="ch-dd"></div>
       <details><summary>표로 보기 (월말)</summary><div class="scroll" id="tb-market"></div></details>
     </div>
+    <div class="card-h" style="margin-top: 28px">
+      <div><h2>시장 전체 밸류에이션</h2><div class="sub" id="mval-sub"></div></div>
+      <div class="rank-tabs row" id="mval-k" role="group" aria-label="지표"></div>
+    </div>
+    <div class="tiles" id="mval-tiles"></div>
+    <div class="card">
+      <div class="legend" id="lg-mval"></div>
+      <div class="chart" id="ch-mval"></div>
+      <div class="note">PER = 그날 시가총액 합 ÷ 그날까지 공시된 TTM 순이익 합(적자 포함, 비지배지분 포함), PBR = 시가총액 합 ÷ 자본총계 합, ROE = 순이익 합 ÷ 자본 합.
+        보통주 중 재무를 아는 종목끼리, 실적은 접수 다음 거래일부터(시점 맞춤), 주 단위. 이익 합이 0 이하이거나 PER 이 100배를 넘으면(이익 합이 0 근처) 그래프에서 비운다. 순이익이 시총 5배를 넘는 등 데이터 오류로 보이는 종목은 뺐다.
+        재무를 아는 종목의 시총 비중(커버리지)이 2017~18년에는 60~70%대라 초기 값은 덜 정확하다. 매매 신호가 아니다.</div>
+    </div>
     <h2 style="margin-top: 28px">시장 국면</h2>
     <div class="sub" id="regime-sub"></div>
     <div class="tiles" id="regime-tiles"></div>
@@ -1965,6 +1977,37 @@ function renderMarket() {
   table(t, [{ key: "mo", label: "월" }, { key: "k", label: "KOSPI200 (=100)", num: true, fmt: (v) => fmtNum(v, 1) },
     { key: "e", label: "KODEX200 (=100)", num: true, fmt: (v) => fmtNum(v, 1) }, { key: "dd", label: "낙폭", num: true, fmt: (v) => v == null ? "–" : v.toFixed(1) + "%" }], rows);
 }
+let MVAL_K = "per";
+function renderMval() {
+  const V = D.mval;
+  if (!V || !V.markets) { $("#mval-sub").textContent = "데이터 없음"; return; }
+  const lab = { per: "PER", pbr: "PBR", roe: "ROE" }, fmtK = (k, v) => v == null ? "–" : k === "roe" ? (v * 100).toFixed(1) + "%" : v.toFixed(k === "pbr" ? 2 : 1) + "배";
+  $("#mval-sub").textContent = `${KDATE(V.asof)} 기준 · 2017년 4월부터 주 단위 · 코스피·코스닥 보통주 전체`;
+  const tiles = [];
+  for (const [mk, M] of Object.entries(V.markets)) {
+    const n = M.dates.length;
+    for (const k of ["per", "pbr"]) {
+      const h = M[k].filter((x) => x != null).sort((a, b) => a - b), now = M[k][n - 1];
+      const pos = now == null ? null : h.filter((x) => x <= now).length / h.length;
+      tiles.push({ label: `${mk} ${lab[k]}`, value: fmtK(k, now),
+        delta: pos == null ? (k === "per" ? "이익 합 적자" : "") : `2017년 이후 ${pos >= 0.5 ? "상위 " + Math.max(1, Math.round((1 - pos) * 100)) : "하위 " + Math.max(1, Math.round(pos * 100))}%` +
+          ` · 중앙값 ${fmtK(k, h[h.length >> 1])}` });
+    }
+    // 지난 1년(52주) 시총·이익 변화 → PER 변화 분해
+    const j = Math.max(0, n - 53);
+    if (M.mcap[j] && M.earn[j] > 0 && M.earn[n - 1] > 0 && M.per[j] < 100 && M.per[n - 1] < 100) {
+      const dm = M.mcap[n - 1] / M.mcap[j] - 1, de = M.earn[n - 1] / M.earn[j] - 1;
+      tiles.push({ label: `${mk} 지난 1년`, value: `시총 ${fmtPct(dm, 0)} · 이익 ${fmtPct(de, 0)}`,
+        delta: `PER ${fmtK("per", M.per[j])} → ${fmtK("per", M.per[n - 1])} (${Math.abs(de) > Math.abs(dm) ? "이익이" : "주가가"} 더 크게 움직였다)` });
+    }
+  }
+  $("#mval-tiles").innerHTML = tiles.map((t) => `<div class="tile"><div class="label">${esc(t.label)}</div><div class="value">${esc(t.value)}</div><div class="delta">${esc(t.delta)}</div></div>`).join("");
+  const S = Object.entries(V.markets).map(([mk, M], i) => ({ name: mk, short: mk, color: css(i ? "--series-2" : "--series-1"),
+    points: sliceRange(M.dates.map((d, k) => [d, M[MVAL_K][k] == null || (MVAL_K === "per" && M[MVAL_K][k] > 100) ? null : (MVAL_K === "roe" ? M[MVAL_K][k] * 100 : M[MVAL_K][k])]).filter((p) => p[1] != null)) }));
+  legend($("#lg-mval"), S);
+  lineChart($("#ch-mval"), S, { height: 240, yfmt: (v) => MVAL_K === "roe" ? v.toFixed(0) + "%" : v.toFixed(MVAL_K === "pbr" ? 1 : 0) + (MVAL_K === "roe" ? "" : "배"),
+    endLabels: true, refs: MVAL_K === "pbr" ? [{ y: 1, label: "1배" }] : [], aria: `시장 전체 ${lab[MVAL_K]}` });
+}
 function renderRegime() {
   const G = D.regime;
   if (!G) { $("#regime-sub").textContent = "국면 데이터 없음"; return; }
@@ -2142,7 +2185,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "market"];
@@ -2185,7 +2228,8 @@ function seg(host, items, get, set) {
     set(b.dataset.v); host.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
   }));
 }
-seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderRegime(); });
+seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderMval(); renderRegime(); });
+seg($("#mval-k"), [["per", "PER"], ["pbr", "PBR"], ["roe", "ROE"]], () => MVAL_K, (v) => { MVAL_K = v; renderMval(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
 $("#val-q").addEventListener("input", () => { VAL_LIMIT = 50; renderValuation(); });
