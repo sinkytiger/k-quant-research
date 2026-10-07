@@ -41,8 +41,16 @@ def series_points(s: pd.Series) -> list:
     return [[f"{d:%Y-%m-%d}", round(float(v), 4)] for d, v in s.items()]
 
 
+def _lagger():
+    """휴장일을 반영한 '영업일 지연' 계산기 (KIS 휴장일 달력 + 확인된 휴장일)."""
+    from src.data import market_extra as mx
+
+    cal, hol, today = mx.load_calendar(), frozenset(krx_daily.load_holidays()), pd.Timestamp.today()
+    return lambda last: None if last is None else int(mx.trading_lag(last, today, cal, hol))
+
+
 def data_status() -> dict:
-    today = pd.Timestamp.today().normalize()
+    lag = _lagger()
     rows = []
     for ds, label in (("stk", "유가증권 일별매매"), ("ksq", "코스닥 일별매매"),
                       ("idx_kospi", "KOSPI 지수"), ("etf", "ETF(KODEX200)")):
@@ -51,18 +59,18 @@ def data_status() -> dict:
         rows.append({"name": f"KRX {label}", "count": len(days),
                      "first": f"{days[0]:%Y-%m-%d}" if days else None,
                      "last": f"{last:%Y-%m-%d}" if last is not None else None,
-                     "lag_bdays": int(len(pd.bdate_range(last, today)) - 1) if last is not None else None})
+                     "lag_bdays": lag(last)})
     caps = marketcap.saved_days()
     rows.append({"name": "시가총액 스냅샷", "count": len(caps), "first": f"{caps[0]:%Y-%m-%d}" if caps else None,
                  "last": f"{caps[-1]:%Y-%m-%d}" if caps else None,
-                 "lag_bdays": int(len(pd.bdate_range(caps[-1], today)) - 1) if caps else None})
+                 "lag_bdays": lag(caps[-1]) if caps else None})
     m = membership.load_membership()
     members = membership.all_members(m)
     fl = [flows.load(c) for c in membership.current_members(m)]
     flast = max((f.index.max() for f in fl if len(f)), default=None)
     rows.append({"name": "KIS 수급 (현재 유니버스)", "count": sum(1 for f in fl if len(f)),
                  "first": None, "last": f"{flast:%Y-%m-%d}" if flast is not None else None,
-                 "lag_bdays": int(len(pd.bdate_range(flast, today)) - 1) if flast is not None else None})
+                 "lag_bdays": lag(flast)})
     have = {p.stem for p in config.PRICES_DIR.glob("*.csv")} if config.PRICES_DIR.exists() else set()
     safe = bool(m) and all(c in have for c in members)
     return {"rows": rows, "universe_snapshots": len(m), "universe_members_ever": len(members),
@@ -224,6 +232,27 @@ def _card(name: str, close: pd.Series, n: int = 120, extra: dict | None = None) 
             "pct": last / prev - 1, "spark": [round(float(v), 4) for v in c.tail(n)], **(extra or {})}
 
 
+KEY_FILINGS = ("주요사항", "자사주", "자금조달", "수주", "리스크", "M&A", "투자")
+
+
+def recent_filings(names: dict, days: int = 7, n: int = 10) -> list[dict]:
+    """유니버스 종목의 최근 주요 공시 (분류가 KEY_FILINGS 인 것만, 정정공시·증권사 일상 발행 신고 제외)."""
+    from src import stock_detail as sd
+    from src.data import dart
+
+    dl = dart.load_all(start=pd.Timestamp.today().normalize() - pd.Timedelta(days=days))
+    if dl.empty:
+        return []
+    cur = set(membership.current_members())
+    dl = dl[dl["stock_code"].isin(cur)].copy()
+    dl["cat"] = dl["report_nm"].map(dart.classify)
+    routine = dl["report_nm"].str.contains(r"일괄신고|파생결합|투자설명서|증권신고서\(채무증권", regex=True)
+    dl = dl[dl["cat"].isin(KEY_FILINGS) & ~routine].sort_values(["rcept_dt", "rcept_no"], ascending=False)
+    dl = dl.drop_duplicates(["rcept_dt", "stock_code", "report_nm"]).head(n)
+    return [{"date": f"{r.rcept_dt:%Y-%m-%d}", "code": r.stock_code, "name": names.get(r.stock_code, r.corp_name),
+             "title": str(r.report_nm).strip(), "cat": r.cat, "url": sd.DART_VIEW + str(r.rcept_no)} for r in dl.itertuples()]
+
+
 def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
     """홈 탭: 시장 카드, 순위표, 고른 종목 캔들, 다가오는 배당 일정 (전 거래일 종가 기준)."""
     from src.data import dividends, market_extra as mx
@@ -263,6 +292,11 @@ def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
                          "mcap": float(pd.to_numeric(str(r.MKTCAP).replace(",", ""), errors="coerce") or 0),
                          "asof": f"{days[-1]:%Y-%m-%d}"})
     R = pd.DataFrame(rows)
+    # 시장폭: 거래가 있었던 종목 중 오른·내린·보합 (ETF 제외)
+    breadth = {}
+    for mk in ("코스피", "코스닥"):
+        sub = R[(R["market"] == mk) & (R["volume"] > 0)]
+        breadth[mk] = {"up": int((sub["pct"] > 0).sum()), "down": int((sub["pct"] < 0).sum()), "flat": int((sub["pct"] == 0).sum())}
     # 외국인·기관 순매수 (유니버스 종목, KIS 수급 최신일)
     cur = sorted(membership.current_members())
     fr = flows.flow_panel(cur, "외국인합계")
@@ -316,7 +350,7 @@ def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
     log.info("홈: 카드 %d, 순위 종목 %d, 캔들 %d, 배당 일정 %d", len(cards), len(R), len(candles), len(upcoming))
     return {"cards": [c for c in cards if c], "rows": R.where(R.notna(), None).to_dict("records"), "lists": lists,
             "candles": candles, "flow_day": f"{flow_day:%Y-%m-%d}" if flow_day is not None else None,
-            "upcoming": upcoming}
+            "upcoming": upcoming, "breadth": breadth, "filings": recent_filings(names)}
 
 
 def map_section(log, top: int = 300) -> dict:

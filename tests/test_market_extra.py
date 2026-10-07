@@ -19,3 +19,19 @@ def test_parse_investor_converts_million_won():
     df = mx.parse_investor(rows)
     assert df.loc["2026-09-30", "외국인"] == -2064557 * 1_000_000
     assert df.loc["2026-09-30", "index"] == 6838.04
+
+
+def test_parse_calendar_open_flag():
+    rows = [{"bass_dt": "20261005", "opnd_yn": "N"}, {"bass_dt": "20261006", "opnd_yn": "Y"}, {"bass_dt": ""}]
+    cal = mx.parse_calendar(rows)
+    assert list(cal["open"]) == [False, True]
+
+
+def test_trading_lag_skips_holidays():
+    cal = pd.Series({pd.Timestamp("2026-10-05"): False, pd.Timestamp("2026-10-06"): True, pd.Timestamp("2026-10-07"): True})
+    # 10-02(금) 데이터, 10-07 아침: 주말·대체공휴일 빼면 10-06 하루 → 정상 범위
+    assert mx.trading_lag("2026-10-02", "2026-10-07 08:50", cal) == 1
+    assert mx.trading_lag("2026-10-06", "2026-10-07", cal) == 0
+    # 달력이 없으면 평일 − 알려진 휴장일
+    assert mx.trading_lag("2026-10-02", "2026-10-07", pd.Series(dtype=bool)) == 2
+    assert mx.trading_lag("2026-10-02", "2026-10-07", pd.Series(dtype=bool), {pd.Timestamp("2026-10-05")}) == 1

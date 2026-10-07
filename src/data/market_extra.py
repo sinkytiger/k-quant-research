@@ -4,7 +4,8 @@
   FID_COND_MRKT_DIV_CODE N = 해외지수, X = 환율. 한 번에 기간을 지정해 받는다.
 - 시장별 투자자 일별: FHPTJ04040000 (`/quotations/inquire-investor-daily-by-market`).
   한 번 호출에 약 300거래일. 금액 단위 백만원 → 원으로 저장.
-저장: raw/global/<name>.csv, raw/market_investor/<KOSPI|KOSDAQ>.csv (날짜로 병합)
+- 국내 휴장일: CTCA0903R (`/quotations/chk-holiday`). 기준일부터 약 24일의 개장 여부. KIS 안내대로 하루 1번만 부른다.
+저장: raw/global/<name>.csv, raw/market_investor/<KOSPI|KOSDAQ>.csv, raw/kis_calendar.csv (날짜로 병합)
 """
 from __future__ import annotations
 
@@ -105,8 +106,53 @@ def fetch_investor(mkt: str, end=None) -> pd.DataFrame:
     return df
 
 
+def calendar_path() -> Path:
+    return config.DATA / "raw" / "kis_calendar.csv"
+
+
+def parse_calendar(rows: list[dict]) -> pd.DataFrame:
+    out = [{"Date": pd.Timestamp(str(r["bass_dt"])), "open": str(r.get("opnd_yn", "")).upper() == "Y"}
+           for r in rows if len(str(r.get("bass_dt", ""))) == 8]
+    return pd.DataFrame(out).set_index("Date").sort_index() if out else pd.DataFrame()
+
+
+def fetch_calendar(base) -> pd.DataFrame:
+    from src import kis
+
+    body, _ = kis.call("CTCA0903R", "/uapi/domestic-stock/v1/quotations/chk-holiday",
+                       {"BASS_DT": f"{pd.Timestamp(base):%Y%m%d}", "CTX_AREA_NK": "", "CTX_AREA_FK": ""})
+    df = parse_calendar(list(body.get("output") or []))
+    if df.empty:
+        raise ValueError("휴장일 빈 응답")
+    return df
+
+
+def load_calendar() -> pd.Series:
+    """날짜 → 개장 여부(bool). 없으면 빈 Series."""
+    p = calendar_path()
+    return pd.read_csv(p, index_col="Date", parse_dates=True)["open"].astype(bool) if p.exists() else pd.Series(dtype=bool)
+
+
+def trading_lag(last, today, calendar: pd.Series, holidays=frozenset()) -> int:
+    """last 다음 날부터 today 전날까지의 개장일 수 (KRX 는 D일 데이터를 D+1 아침에 준다 → 0~1 이 정상).
+
+    KIS 달력에 있는 날은 달력을, 없는 날은 평일이면서 알려진 휴장일이 아닌지로 판단한다.
+    """
+    last, today = pd.Timestamp(last).normalize(), pd.Timestamp(today).normalize()
+    n = 0
+    for d in pd.date_range(last + pd.Timedelta(days=1), today - pd.Timedelta(days=1)):
+        n += bool(calendar[d]) if d in calendar.index else (d.weekday() < 5 and d not in holidays)
+    return n
+
+
 def update(log, global_days: int = 400) -> int:
     fails = 0
+    try:
+        cal = _merge_save(calendar_path(), fetch_calendar(pd.Timestamp.today().normalize() - pd.Timedelta(days=10)))
+        log.info("휴장일 달력 %d일 (~%s, 휴장 %d일)", len(cal), f"{cal.index.max():%Y-%m-%d}", int((~cal["open"]).sum()))
+    except Exception as e:  # noqa: BLE001
+        fails += 1
+        log.warning("휴장일 달력: %s", e)
     for name in GLOBAL:
         p = global_path(name)
         start = (pd.read_csv(p, index_col="Date", parse_dates=True).index.max() - pd.Timedelta(days=7)) if p.exists() \
