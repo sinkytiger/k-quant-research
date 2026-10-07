@@ -120,7 +120,8 @@ def summarize(text: str, n: int = 220) -> str:
     for line in (text or "").splitlines():
         t = re.sub(r"\s+", " ", line).strip()
         letters = len(re.findall(r"[가-힣A-Za-z]", t))
-        if letters < 4 or letters < 0.4 * len(t.replace(" ", "")) or t in seen:
+        # 증시 글은 숫자가 많으므로 글자 비율 기준은 낮게 (차트 눈금 줄은 글자가 거의 없다)
+        if letters < 4 or letters < 0.25 * len(t.replace(" ", "")) or t in seen:
             continue
         seen.add(t)
         lines.append(t)
