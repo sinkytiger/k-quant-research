@@ -469,6 +469,44 @@ def flows_board_section(log) -> dict:
     return {"asof": f"{asof:%Y-%m-%d}", "windows": list(fb.WINDOWS), "rows": rows, "market": market}
 
 
+def highlow_section(log, hist_days: int = 250) -> dict:
+    """52주 신고가·신저가: 코스피·코스닥 보통주, 오늘 목록 + 최근 hist_days 거래일 개수."""
+    from src import highlow as hl
+
+    days = krx_daily.saved_days("stk")
+    if len(days) < hl.LOOKBACK + hist_days:
+        return {}
+    start = days[-(hl.LOOKBACK + hist_days + 5)]
+    parts = []
+    for ds, mk in (("stk", "코스피"), ("ksq", "코스닥")):
+        raw = krx_daily.load_snapshots(ds, start=start)
+        if len(raw):
+            raw = raw.assign(MKT_NM=mk)
+            parts.append(krx_daily.tidy_stock(raw))
+    tidy = pd.concat(parts, ignore_index=True)
+    last_names = tidy.sort_values("Date").groupby("code").last()
+    common = [c for c, n in last_names["name"].items() if membership.is_common_stock(c, n)]
+    tidy = tidy[tidy["code"].isin(common)]
+    d = hl.adjusted(tidy)
+    H, L, C = (d.pivot(index="Date", columns="code", values=v) for v in ("aH", "aL", "aC"))
+    hi, lo, pmax, pmin = hl.flags(H, L)
+    try:
+        from src.universe import kis_master
+        sec = kis_master.sectors()
+    except Exception:  # noqa: BLE001
+        sec = {}
+    last = last_names.loc[common]
+    info = {c: {"name": r["name"], "market": r["market"], "sector": sec.get(c, "기타"),
+                "mcap": None if pd.isna(r["MarketCap"]) else float(r["MarketCap"])} for c, r in last.iterrows()}
+    out = {"asof": f"{H.index[-1]:%Y-%m-%d}", "lookback": hl.LOOKBACK,
+           "counts": hl.daily_counts(hi, lo, last["market"], hist_days),
+           "hi": hl.today_rows("hi", hi.iloc[-1], H.iloc[-1], pmax.iloc[-1], C, info),
+           "lo": hl.today_rows("lo", lo.iloc[-1], L.iloc[-1], pmin.iloc[-1], C, info),
+           "n_eligible": int(pmax.iloc[-1].notna().sum())}
+    log.info("52주 신고가 %d · 신저가 %d (%s, 대상 %d종목)", len(out["hi"]), len(out["lo"]), out["asof"], out["n_eligible"])
+    return out
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -643,6 +681,7 @@ def main(argv=None) -> int:
     data["filings"] = filings_section(log)
     data["notes"] = notes_section(log)
     data["flowboard"] = flows_board_section(log)
+    data["highlow"] = highlow_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))

@@ -263,14 +263,18 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <button role="tab" data-tab="home" aria-controls="s-home">홈</button>
     <button role="tab" data-tab="stock" aria-controls="s-stock">종목</button>
     <button role="tab" data-tab="filings" aria-controls="s-filings">공시</button>
-    <button role="tab" data-tab="flows" aria-controls="s-flows">수급</button>
+    <button role="tab" data-tab="mkt" aria-controls="s-flows">시장</button>
     <button role="tab" data-tab="etf" aria-controls="s-etf">ETF</button>
     <button role="tab" data-tab="lab" aria-controls="s-research">연구</button>
     <button role="tab" data-tab="overview" aria-controls="s-overview">데이터</button>
   </nav>
+  <div class="subnav rank-tabs row" id="subnav-mkt" role="group" aria-label="시장 하위 메뉴" hidden>
+    <button type="button" data-tab="flows">수급</button>
+    <button type="button" data-tab="highlow">52주 신고가 · 신저가</button>
+    <button type="button" data-tab="market">시장 · 국면</button>
+  </div>
   <div class="subnav rank-tabs row" id="subnav" role="group" aria-label="연구 하위 메뉴" hidden>
     <button type="button" data-tab="research">기록 · IC</button>
-    <button type="button" data-tab="market">시장 · 국면</button>
     <button type="button" data-tab="paper">페이퍼</button>
     <button type="button" data-tab="monitor">유니버스 모니터</button>
     <button type="button" data-tab="notes">분석 노트</button>
@@ -407,6 +411,25 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <div class="note">KIS 투자자별 매매(확정치). 종목 표·업종은 유니버스(코스피 시총 상위 200)만, 위 차트·타일은 시장 전체.
       시총 대비 = 기간 순매수 ÷ 시가총액. 쌍끌이 = 외국인과 기관이 같은 기간에 함께 순매수(또는 순매도). 연구 탭 IC 에서 수급 피처는 약한 신호였고
       단독 롱온리 전략은 게이트를 넘지 못했다. 매매 권유가 아니다.</div>
+  </section>
+
+  <section id="s-highlow" role="tabpanel" data-tab="highlow">
+    <div class="card-h">
+      <div><h2>52주 신고가 · 신저가</h2><div class="sub" id="hl-sub"></div></div>
+      <div class="rank-tabs row" id="hl-mkt" role="group" aria-label="시장"></div>
+    </div>
+    <div class="tiles" id="hl-tiles" style="margin-top:4px"></div>
+    <div class="card">
+      <div class="card-h"><div class="sub" id="hl-ch-sub"></div><div class="rank-tabs row" id="hl-smooth" role="group" aria-label="평활"></div></div>
+      <div class="legend" id="lg-hl"></div>
+      <div class="chart" id="ch-hl"></div>
+    </div>
+    <div class="grid2">
+      <div class="card scroll"><div class="card-h"><h2 class="up">신고가</h2><div class="sub" id="hl-hi-sec"></div></div><table id="hl-hi"></table></div>
+      <div class="card scroll"><div class="card-h"><h2 class="down">신저가</h2><div class="sub" id="hl-lo-sec"></div></div><table id="hl-lo"></table></div>
+    </div>
+    <div class="note">수정가(분할·병합 반영) 기준. 신고가 = 그날 고가가 직전 250거래일 고가의 최고치 이상, 신저가 = 저가가 직전 250거래일 저가의 최저치 이하.
+      상장 1년 미만·거래정지 종목과 우선주·스팩·리츠는 뺐다. 넘어선 폭 = 직전 최고(최저)치 대비. 매매 권유가 아니다.</div>
   </section>
 
   <section id="s-filings" role="tabpanel" data-tab="filings">
@@ -798,7 +821,10 @@ function renderBrief() {
   const facts = [];
   if (B) facts.push(`<div class="fact"><div class="k">코스피 오른 · 내린 종목</div><div class="v"><span class="up">${B.up}</span> <span class="muted" style="font-weight:400">·</span> <span class="down">${B.down}</span></div>
     <div class="breadth" aria-hidden="true"><i style="flex:${B.up};background:var(--up)"></i><i style="flex:${B.flat};background:var(--axis)"></i><i style="flex:${B.down};background:var(--down)"></i></div>
-    <div class="s">상승 비율 ${tot ? Math.round(B.up / tot * 100) : 0}% · 보합 ${B.flat}</div></div>`);
+    <div class="s">상승 비율 ${tot ? Math.round(B.up / tot * 100) : 0}% · 보합 ${B.flat}${(() => {
+      const c = D.highlow && D.highlow.counts && D.highlow.counts["코스피"];
+      return c ? ` · <a href="#highlow" style="color:inherit">52주 신고가 <span class="up">${c.hi.at(-1)}</span> · 신저가 <span class="down">${c.lo.at(-1)}</span></a>` : "";
+    })()}</div></div>`);
   if (inv) facts.push(`<div class="fact"><div class="k">코스피 외국인 · 기관</div><div class="v"><span class="${signCls(inv["외국인"])}">${sgn(inv["외국인"])}${eokTxt(inv["외국인"])}</span></div>
     <div class="s">기관 <span class="${signCls(inv["기관"])}">${sgn(inv["기관"])}${eokTxt(inv["기관"])}</span> · 개인 <span class="${signCls(inv["개인"])}">${sgn(inv["개인"])}${eokTxt(inv["개인"])}</span></div></div>`);
   if (ex) facts.push(`<div class="fact"><div class="k">가장 강한 · 약한 업종 (코스피, 비중 1% 이상)</div><div class="v">${esc(ex.best.n)} <span class="${signCls(ex.best.r)}">${fmtPct(ex.best.r)}</span></div>
@@ -1392,6 +1418,43 @@ function renderFlowBoard() {
   divergingBars($("#ch-fb-sec"), pick.map(([n, v]) => ({ label: n, value: v / 1e8, tip: [{ label: `${FB_WIN}일 ${invName}`, value: krwS(v) }] })),
     { minLim: 1, labelW: 110, vfmt: (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v)).toLocaleString("ko-KR"), aria: "업종별 순매수" });
 }
+/* ---------- 52주 신고가·신저가 ---------- */
+let HL_MKT = "전체", HL_SMOOTH = 5;
+function renderHighLow() {
+  const X = D.highlow;
+  if (!X || !X.counts) { $("#hl-sub").textContent = "데이터 없음"; return; }
+  const mkts = Object.keys(X.counts).filter((k) => k !== "dates");
+  const cnt = (mk, k) => mk === "전체" ? X.counts.dates.map((_, i) => mkts.reduce((a, m) => a + X.counts[m][k][i], 0)) : X.counts[mk][k];
+  const n = X.counts.dates.length;
+  $("#hl-sub").textContent = `${KDATE(X.asof)} 확정치 · 대상 ${X.n_eligible.toLocaleString("ko-KR")}종목(상장 1년 이상 보통주) · 코스피·코스닥`;
+  $("#hl-tiles").innerHTML = ["코스피", "코스닥"].filter((m) => X.counts[m]).map((m) => {
+    const h = X.counts[m].hi, l = X.counts[m].lo, avg = (a) => a.slice(-20).reduce((p, q) => p + q, 0) / 20;
+    return `<div class="tile"><div class="label">${m} 신고가 · 신저가</div><div class="value"><span class="up">${h[n - 1]}</span> <span class="muted" style="font-weight:400">·</span> <span class="down">${l[n - 1]}</span></div>
+      <div class="delta">20일 평균 ${avg(h).toFixed(1)} · ${avg(l).toFixed(1)}</div></div>`;
+  }).join("") + (() => {
+    const h = cnt("전체", "hi"), l = cnt("전체", "lo"), net = h.map((v, i) => v - l[i]);
+    const net20 = net.slice(-20).reduce((a, b) => a + b, 0);
+    return `<div class="tile"><div class="label">신고가 − 신저가 (20일 합, 전체)</div><div class="value ${signCls(net20)}">${sgn(net20)}${Math.abs(net20)}</div>
+      <div class="delta">+ 면 새 고점을 내는 종목이 더 많다</div></div>`;
+  })();
+  const sm = (a) => a.map((_, i) => { const w = a.slice(Math.max(0, i - HL_SMOOTH + 1), i + 1); return w.reduce((p, q) => p + q, 0) / w.length; });
+  const S = [["hi", "신고가", "--up"], ["lo", "신저가", "--down"]].map(([k, l, c]) => ({ name: l + (HL_SMOOTH > 1 ? ` (${HL_SMOOTH}일 평균)` : ""), short: l, color: css(c),
+    points: X.counts.dates.map((d, i) => [d, sm(cnt(HL_MKT, k))[i]]) }));
+  legend($("#lg-hl"), S);
+  $("#hl-ch-sub").textContent = `${HL_MKT} 일별 개수 · 최근 1년`;
+  lineChart($("#ch-hl"), S, { height: 220, yfmt: (v) => v.toFixed(0), endLabels: true, aria: "신고가·신저가 개수" });
+  const tbl = (rows, kind) => {
+    const R = rows.filter((r) => HL_MKT === "전체" || r.market === HL_MKT);
+    const secs = new Map(); for (const r of R) secs.set(r.sector, (secs.get(r.sector) || 0) + 1);
+    $(kind === "hi" ? "#hl-hi-sec" : "#hl-lo-sec").textContent = `${R.length}종목` + (R.length ? " · " + [...secs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([s2, k]) => `${s2} ${k}`).join(", ") : "");
+    return `<thead><tr><th>종목</th><th>업종</th><th class="num">종가</th><th class="num">등락</th><th class="num">넘어선 폭</th><th class="num">1년</th></tr></thead><tbody>` +
+      (R.map((r) => `<tr><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}${r.market === "코스닥" ? '<span class="badge">코스닥</span>' : ""}</td>
+        <td class="muted">${esc(r.sector)}</td><td class="num">${won(r.close)}</td><td class="num ${signCls(r.pct)}">${fmtPct(r.pct, 2)}</td>
+        <td class="num ${signCls(r.beyond)}">${fmtPct(r.beyond, 1)}</td><td class="num ${signCls(r.r1y)}">${fmtPct(r.r1y, 0)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">없음</td></tr>`) + "</tbody>";
+  };
+  $("#hl-hi").innerHTML = tbl(X.hi, "hi");
+  $("#hl-lo").innerHTML = tbl(X.lo, "lo");
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1622,27 +1685,32 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
-const LAB = ["research", "market", "paper", "monitor", "notes"];
-let LAB_LAST = "research";
+const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "market"];
+let LAB_LAST = "research", MKT_LAST = "flows";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
+try { const v = localStorage.getItem("kq-mkt"); if (MKT.includes(v)) MKT_LAST = v; } catch (e) {}
 function showTab(name) {
   if (name && name.startsWith("stock:")) { STK_CODE = name.slice(6); try { localStorage.setItem("kq-stock", STK_CODE); } catch (e) {} name = "stock"; }
   if (name === "lab") name = LAB_LAST;
+  if (name === "mkt") name = MKT_LAST;
   if (name === "data") name = "overview";
   if (!RENDER[name]) name = "home";
   TAB = name;
   const lab = LAB.includes(name);
   if (lab) { LAB_LAST = name; try { localStorage.setItem("kq-lab", name); } catch (e) {} }
-  const group = lab ? "lab" : name === "compare" ? "stock" : name;
+  const mk = MKT.includes(name);
+  if (mk) { MKT_LAST = name; try { localStorage.setItem("kq-mkt", name); } catch (e) {} }
+  const group = lab ? "lab" : mk ? "mkt" : name === "compare" ? "stock" : name;
   document.querySelectorAll("nav.tabs button").forEach((b) => {
     const on = b.dataset.tab === group;
     b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1;
   });
   $("#subnav").hidden = !lab;
-  document.querySelectorAll("#subnav button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
+  $("#subnav-mkt").hidden = !mk;
+  document.querySelectorAll("#subnav button, #subnav-mkt button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   document.querySelectorAll("section[role=tabpanel]").forEach((s) => (s.hidden = s.dataset.tab !== name));
   hideTip();
   RENDER[name]();
@@ -1662,6 +1730,8 @@ function seg(host, items, get, set) {
 seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderRegime(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
+seg($("#hl-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => HL_MKT, (v) => { HL_MKT = v; renderHighLow(); });
+seg($("#hl-smooth"), [[1, "일별"], [5, "5일 평균"], [20, "20일 평균"]], () => HL_SMOOTH, (v) => { HL_SMOOTH = +v; renderHighLow(); });
 seg($("#fb-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => FB_MKT, (v) => { FB_MKT = v; renderFlowBoard(); });
 seg($("#fb-per"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => FB_PER, (v) => { FB_PER = +v; renderFlowBoard(); });
 seg($("#fb-inv"), FB_INVS, () => FB_INV, (v) => { FB_INV = v; renderFlowBoard(); });
@@ -1721,7 +1791,7 @@ tabBtns.forEach((b, i) => {
     if (d) { const n = tabBtns[(i + d + tabBtns.length) % tabBtns.length]; n.focus(); showTab(n.dataset.tab); }
   });
 });
-document.querySelectorAll("#subnav button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+document.querySelectorAll("#subnav button, #subnav-mkt button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 $("#rank-more").addEventListener("click", () => { RANK_ALL = !RANK_ALL; renderRank(); });
 seg($("#map-per"), MAP_PERS, () => MAP_PER, (v) => { MAP_PER = v; renderMap(); });
