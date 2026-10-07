@@ -87,6 +87,33 @@ def import_sources(notes_dir: Path, root: Path, log=None) -> int:
     return n
 
 
+SKIP_LINE = re.compile(r"Research|Executive Summary|^주간 연결|^참고|^목차|^\d+\.\s")
+
+
+def headline(text: str, title: str | None = None) -> tuple[str | None, str]:
+    """첫 쪽 글자 → (헤드라인, 그 뒤 본문 한두 줄).
+
+    헤드라인 = 제목 줄을 뺀 첫 '문장 같은 줄'(한글 6자 이상, 120자 이하). 'Weekly Market Research ·' 같은 머리 줄,
+    'Executive Summary'·'주간 연결'·'참고'·장 번호 줄은 건너뛴다.
+    """
+    lines = [re.sub(r"\s+", " ", x).strip() for x in (text or "").splitlines()]
+    lines = [x for x in lines if x]
+    if lines and title and (lines[0] == title or lines[0].startswith(title[:10])):
+        lines = lines[1:]
+    head, rest = None, []
+    for x in lines:
+        if SKIP_LINE.search(x) or len(re.findall(r"[가-힣]", x)) < 6:
+            continue
+        if head is None and len(x) <= 120:
+            head = x
+            continue
+        if head is not None:
+            rest.append(x)
+            if sum(len(r) for r in rest) > 160:
+                break
+    return head, summarize("\n".join(rest), 200)
+
+
 def summarize(text: str, n: int = 220) -> str:
     """글자가 있는 줄만 이어 붙인다 (차트 눈금처럼 숫자·기호뿐인 줄은 뺀다)."""
     lines, seen = [], set()
@@ -183,6 +210,7 @@ def scan(notes_dir: Path, out_dir: Path, names: dict[str, str]) -> list[dict]:
             "pages": info["pages"], "kb": round(pdf.stat().st_size / 1024),
             "public": rel.split("/")[0] == "public", "category": category(rel),
             "summary": summarize(first), "stocks": find_stocks(info["text"], names),
+            **dict(zip(("headline", "lede"), headline(first, info["title"]))),
         })
     for f in out_dir.iterdir():  # 지운 노트의 사본 정리
         if f.is_file() and f.name not in keep:

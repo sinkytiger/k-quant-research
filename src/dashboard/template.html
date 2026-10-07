@@ -222,6 +222,16 @@ td a { color: var(--series-1); text-decoration: none; } td a:hover { text-decora
 .note-card .sum { font-size: var(--fs-base); color: var(--text-secondary); margin-top: var(--sp-2); line-height: 1.6; word-break: keep-all; }
 .note-card .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-2); }
 @media (max-width: 560px) { .note-card { grid-template-columns: 72px 1fr; } .note-card .th { width: 72px; height: 94px; } }
+.rcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--sp-3); }
+.rcard { display: grid; grid-template-columns: 74px 1fr; gap: var(--sp-3); text-decoration: none; color: inherit; padding: var(--sp-2); border-radius: var(--r-md); }
+.rcard:hover { background: var(--hover); }
+.rcard .th { width: 74px; height: 96px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page) center/cover no-repeat;
+  display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: var(--fs-xs); }
+.rcard .cat { font-size: var(--fs-xs); color: var(--muted); }
+.rcard .hl { font-size: var(--fs-md); font-weight: 650; line-height: 1.4; margin: 2px 0 4px; word-break: keep-all; }
+.rcard .ld { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rcard .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tone.w { color: var(--warning); border-color: var(--warning); }
 .stk-search { position: relative; }
 .stk-search input { width: 260px; }
 .stk-sug { position: absolute; right: 0; top: 32px; z-index: 6; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
@@ -282,6 +292,11 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
 
   <section id="s-home" role="tabpanel" data-tab="home">
     <div class="card brief" id="brief"></div>
+    <div class="card" id="rcard-wrap">
+      <div class="card-h"><div><h2>최신 리서치</h2><div class="sub" id="rcard-sub"></div></div>
+        <a href="#notes" class="sub" style="color:var(--series-1);text-decoration:none">분석 노트 전체 →</a></div>
+      <div class="rcards" id="rcards"></div>
+    </div>
     <div class="idx-strip" id="idx-strip"></div>
     <div class="card" id="watch-card">
       <div class="card-h"><div><h2>관심 종목</h2><div class="sub" id="watch-sub"></div></div>
@@ -843,9 +858,32 @@ function renderBrief() {
       <div class="head">${headCard(k)}${headCard(q)}</div><p>${esc(sentences.join(" "))}</p></div>
     <div class="facts">${facts.join("")}</div>`;
 }
+function renderResearchCards() {
+  const N = D.notes || [];
+  $("#rcard-wrap").hidden = !N.length;
+  if (!N.length) return;
+  const latest = new Map();
+  for (const n of N) { const c = n.category || "기타"; if (!latest.has(c) || n.date > latest.get(c).date) latest.set(c, n); }
+  const cards = [...latest.values()].sort((a, b) => (b.date + b.title).localeCompare(a.date + a.title)).slice(0, 3);
+  const nm = (c) => (STOCKS.find((s) => s.code === c) || {}).name || c;
+  const watchHits = N.filter((n) => n.stocks.some((c) => WATCH.includes(c))).length;
+  $("#rcard-sub").textContent = `분류별 가장 최근 노트 · 누르면 PDF 가 열린다` + (WATCH.length ? ` · 관심 종목이 나온 노트 ${watchHits}개` : "");
+  $("#rcards").innerHTML = cards.map((n) => {
+    const tags = [...n.stocks].sort((a, b) => WATCH.includes(b) - WATCH.includes(a)).slice(0, 5)
+      .map((c) => `<span class="tone${WATCH.includes(c) ? " w" : ""}" data-stock="${c}" style="cursor:pointer">${WATCH.includes(c) ? "★ " : ""}${esc(nm(c))}</span>`).join("");
+    return `<a class="rcard" href="${esc(n.file)}" target="_blank" rel="noopener">
+      <div class="th" style="${n.thumb ? `background-image:url('${esc(n.thumb)}')` : ""}">${n.thumb ? "" : "PDF"}</div>
+      <div><div class="cat">${esc(n.category || "기타")} · ${KDATE(n.date)}${n.public ? "" : " · 비공개"}</div>
+        <div class="hl">${esc(n.headline || n.title)}</div>
+        <div class="ld">${esc(n.headline ? (n.lede || n.title) : (n.summary || ""))}</div>
+        ${tags ? `<div class="tags">${tags}</div>` : ""}</div></a>`;
+  }).join("");
+  $("#rcards").querySelectorAll("[data-stock]").forEach((t) => t.addEventListener("click", (e) => { e.preventDefault(); openStock(t.dataset.stock); }));
+}
 function renderHome() {
   const H = D.home;
   if (!H) return;
+  renderResearchCards();
   const cards = H.cards;
   const val = (c) => c.last.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
   renderBrief();
@@ -1365,7 +1403,8 @@ function renderNotes() {
       <div><div class="meta">${esc(n.category || "기타")} · ${n.date} · ${n.pages ? n.pages + "쪽" : "쪽수 모름"} · ${n.kb.toLocaleString("ko-KR")}KB ·
         ${n.public ? '<span class="tone p" style="border-color:var(--good);color:var(--good-text)">공개</span>' : '<span class="tone">비공개</span>'}</div>
         <h3>${esc(n.title)}</h3>
-        ${n.summary ? `<div class="sum">${esc(n.summary)}</div>` : '<div class="sum muted">본문 글자를 읽지 못했다 (스캔 이미지 PDF 일 수 있다)</div>'}
+        ${n.headline ? `<div style="font-weight:600;margin-top:2px">${esc(n.headline)}</div>` : ""}
+        ${n.summary ? `<div class="sum">${esc(n.headline ? (n.lede || n.summary) : n.summary)}</div>` : '<div class="sum muted">본문 글자를 읽지 못했다 (스캔 이미지 PDF 일 수 있다)</div>'}
         ${n.stocks.length ? `<div class="tags">${n.stocks.map((c) => STOCK_SET.has(c)
           ? `<span class="tone" data-stock="${c}" style="cursor:pointer">${esc(nm(c))}</span>` : `<span class="tone">${esc(nm(c))}</span>`).join("")}</div>` : ""}
       </div></a>`).join("") || `<div class="note">검색 결과 없음</div>`;

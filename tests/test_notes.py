@@ -63,3 +63,14 @@ def test_import_sources_copies_new_only(tmp_path):
     assert notes.import_sources(nd, root) == 0  # 이미 있으면 건너뜀
     (src / "a.pdf").unlink()
     assert notes.import_sources(nd, root) == 0 and (nd / "주간 리서치" / "a.pdf").exists()  # 원본을 지워도 남는다
+
+
+def test_headline_skips_header_lines():
+    daily = "장마감 리서치 — 2026-10-02\n코스피 7,000선 회복, S-Oil 반등\n코스피 +0.46%로 마감했다. 삼성전자는 보합이었다.\n주간 연결: 5주차 마지막 거래일."
+    h, lede = notes.headline(daily, "장마감 리서치 — 2026-10-02")
+    assert h == "코스피 7,000선 회복, S-Oil 반등" and lede.startswith("코스피 +0.46%로")
+    weekly = ("주간 리서치 — 2026-09-28 ~ 2026-10-02\nWeekly Market Research · 주간마켓리뷰 · 5거래일\n"
+              "코스피 하락은 두 종목이 만든 것이었다\nExecutive Summary\n코스피 -1.09%, 코스닥 +5.78%였다.")
+    h, lede = notes.headline(weekly, "주간 리서치 — 2026-09-28 ~ 2026-10-02")
+    assert h == "코스피 하락은 두 종목이 만든 것이었다" and lede == "코스피 -1.09%, 코스닥 +5.78%였다."
+    assert notes.headline("", None) == (None, "")
