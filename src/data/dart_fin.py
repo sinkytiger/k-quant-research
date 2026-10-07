@@ -81,10 +81,17 @@ def _get(path: str, params: dict, binary: bool = False, retries: int = 3):
 
 
 def parse_corpcode(xml: str) -> pd.DataFrame:
-    rows = re.findall(r"<corp_code>(\d+)</corp_code>\s*<corp_name>(.*?)</corp_name>.*?<stock_code>\s*(\d*)\s*</stock_code>",
-                      xml, re.S)
+    """CORPCODE.xml → 종목코드 있는 회사. <list> 항목 단위로 읽는다.
+
+    (예전에는 정규식으로 이어 읽어서, 영문이 섞인 새 종목코드(예: 0041L0)를 만나면 다음 회사의 코드를 끌어오는 버그가 있었다.)
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml)
+    rows = [{"corp_code": (e.findtext("corp_code") or "").strip(), "corp_name": (e.findtext("corp_name") or "").strip(),
+             "stock_code": (e.findtext("stock_code") or "").strip()} for e in root.iter("list")]
     df = pd.DataFrame(rows, columns=["corp_code", "corp_name", "stock_code"])
-    return df[df["stock_code"].str.len() == 6].drop_duplicates("stock_code").reset_index(drop=True)
+    return df[df["stock_code"].str.fullmatch(r"[0-9A-Z]{6}")].drop_duplicates("stock_code").reset_index(drop=True)
 
 
 def corp_codes(max_age_days: int = 30) -> pd.DataFrame:
