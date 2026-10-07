@@ -211,6 +211,17 @@ td a { color: var(--series-1); text-decoration: none; } td a:hover { text-decora
 .cmp-chips .chip button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 6px; border-radius: 999px; }
 .cmp-chips .chip button:hover { color: var(--text-primary); background: var(--hover); }
 .corr td.c { text-align: center; min-width: 64px; }
+.notes { display: grid; gap: var(--sp-3); margin-top: var(--sp-3); }
+.note-card { display: grid; grid-template-columns: 120px 1fr; gap: var(--sp-4); background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: var(--sp-3); text-decoration: none; color: inherit; }
+.note-card:hover { border-color: var(--text-secondary); }
+.note-card .th { width: 120px; height: 156px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page) center/cover no-repeat;
+  display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: var(--fs-sm); }
+.note-card h3 { margin: 2px 0 4px; font-size: var(--fs-lg); }
+.note-card .meta { font-size: var(--fs-sm); color: var(--muted); }
+.note-card .sum { font-size: var(--fs-base); color: var(--text-secondary); margin-top: var(--sp-2); line-height: 1.6; word-break: keep-all; }
+.note-card .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-2); }
+@media (max-width: 560px) { .note-card { grid-template-columns: 72px 1fr; } .note-card .th { width: 72px; height: 94px; } }
 .stk-search { position: relative; }
 .stk-search input { width: 260px; }
 .stk-sug { position: absolute; right: 0; top: 32px; z-index: 6; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
@@ -261,6 +272,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <button type="button" data-tab="market">시장 · 국면</button>
     <button type="button" data-tab="paper">페이퍼</button>
     <button type="button" data-tab="monitor">유니버스 모니터</button>
+    <button type="button" data-tab="notes">분석 노트</button>
   </div>
 
   <section id="s-home" role="tabpanel" data-tab="home">
@@ -356,6 +368,14 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="card scroll"><div class="sub" style="margin-bottom:6px">일간 수익률 상관</div><table class="corr" id="cmp-corr"></table></div>
     </div>
     <div class="note">비교는 과거 가격 움직임일 뿐이며 매매 권유가 아니다. 관심 종목·비교 목록은 이 브라우저에만 저장된다.</div>
+  </section>
+
+  <section id="s-notes" role="tabpanel" data-tab="notes">
+    <div class="card-h">
+      <div><h2>분석 노트</h2><div class="sub" id="notes-sub"></div></div>
+      <input class="search" id="notes-q" placeholder="제목·요약·종목 검색" aria-label="노트 검색" style="width:220px">
+    </div>
+    <div class="notes" id="notes"></div>
   </section>
 
   <section id="s-filings" role="tabpanel" data-tab="filings">
@@ -1251,6 +1271,33 @@ function renderFilings() {
     ${ev ? `사전 등록 이벤트 연구(<a href="${esc(ev.url || "#")}" target="_blank" rel="noopener">dart_events_v1</a>)에서 자사주 취득·유상증자·공급계약 공시는 반응이 진입 전에 끝나 매매 신호가 되지 못했다.` : ""}
     표시용 정보이며 매매 권유가 아니다.`;
 }
+/* ---------- 분석 노트 (notes/ 의 PDF) ---------- */
+function renderNotes() {
+  const N = D.notes || [];
+  const q = ($("#notes-q").value || "").trim();
+  const nm = (c) => (STOCKS.find((s) => s.code === c) || {}).name || c;
+  const rows = N.filter((n) => !q || n.title.includes(q) || (n.summary || "").includes(q) || n.stocks.some((c) => nm(c).includes(q) || c.startsWith(q)));
+  $("#notes-sub").textContent = N.length
+    ? `${N.length}개 · 공개 ${N.filter((n) => n.public).length}개 · 누르면 PDF 가 열린다 · notes/ 폴더에 PDF 를 넣고 대시보드를 새로 만들면 추가된다`
+    : "notes/ 폴더에 PDF 를 넣고 대시보드를 새로 만들면 여기에 올라온다";
+  if (!N.length) {
+    $("#notes").innerHTML = `<div class="card"><div class="sub" style="line-height:1.8">
+      1. 분석을 PDF 로 저장해 <b>K-quant/notes/</b> 에 넣는다. 공개해도 되는 것은 <b>notes/public/</b> 에 넣는다.<br>
+      2. 파일 이름은 <b>2026-10-07_반도체 업황 점검.pdf</b> 처럼 날짜_제목으로 지으면 그대로 쓰인다.<br>
+      3. <b>대시보드 새로 만들고 열기.bat</b> 을 실행하거나 다음 날 아침 배치를 기다린다.</div></div>`;
+    return;
+  }
+  $("#notes").innerHTML = rows.map((n) => `<a class="note-card" href="${esc(n.file)}" target="_blank" rel="noopener">
+      <div class="th" style="${n.thumb ? `background-image:url('${esc(n.thumb)}')` : ""}">${n.thumb ? "" : "PDF"}</div>
+      <div><div class="meta">${n.date} · ${n.pages ? n.pages + "쪽" : "쪽수 모름"} · ${n.kb.toLocaleString("ko-KR")}KB ·
+        ${n.public ? '<span class="tone p" style="border-color:var(--good);color:var(--good-text)">공개</span>' : '<span class="tone">비공개</span>'}</div>
+        <h3>${esc(n.title)}</h3>
+        ${n.summary ? `<div class="sum">${esc(n.summary)}</div>` : '<div class="sum muted">본문 글자를 읽지 못했다 (스캔 이미지 PDF 일 수 있다)</div>'}
+        ${n.stocks.length ? `<div class="tags">${n.stocks.map((c) => STOCK_SET.has(c)
+          ? `<span class="tone" data-stock="${c}" style="cursor:pointer">${esc(nm(c))}</span>` : `<span class="tone">${esc(nm(c))}</span>`).join("")}</div>` : ""}
+      </div></a>`).join("") || `<div class="note">검색 결과 없음</div>`;
+  $("#notes").querySelectorAll("[data-stock]").forEach((t) => t.addEventListener("click", (e) => { e.preventDefault(); openStock(t.dataset.stock); }));
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1481,10 +1528,10 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
-const LAB = ["research", "market", "paper", "monitor"];
+const LAB = ["research", "market", "paper", "monitor", "notes"];
 let LAB_LAST = "research";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
 function showTab(name) {
@@ -1521,6 +1568,7 @@ function seg(host, items, get, set) {
 seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderRegime(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
+$("#notes-q").addEventListener("input", renderNotes);
 $("#fl-q").addEventListener("input", () => { FL_LIMIT = 150; renderFilings(); });
 $("#fl-routine").addEventListener("change", () => { FL_LIMIT = 150; renderFilings(); });
 $("#fl-more").addEventListener("click", () => { FL_LIMIT += 150; renderFilings(); });

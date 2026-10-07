@@ -417,6 +417,15 @@ def filings_section(log, days: int = 31) -> dict:
     return {**meta, "n": len(out["rows"])}
 
 
+def notes_section(log) -> list[dict]:
+    """분석 노트: notes/ 의 PDF 목록 (outputs/notes/ 로 복사·미리보기 생성)."""
+    from src import notes
+
+    rows = notes.scan(config.ROOT / "notes", config.OUTPUTS / "notes", membership.load_names())
+    log.info("분석 노트 %d개 (공개 %d)", len(rows), sum(r["public"] for r in rows))
+    return rows
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -589,6 +598,7 @@ def main(argv=None) -> int:
             "regime": regime_section(log), "quality": quality_section(log), "home": home_section(log)}
     data["map"] = map_section(log)
     data["filings"] = filings_section(log)
+    data["notes"] = notes_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
