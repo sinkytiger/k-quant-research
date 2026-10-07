@@ -232,6 +232,14 @@ td a { color: var(--series-1); text-decoration: none; } td a:hover { text-decora
 .rcard .ld { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .rcard .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .tone.w { color: var(--warning); border-color: var(--warning); }
+.scr { display: grid; grid-template-columns: 300px 1fr; gap: var(--sp-3); margin-top: var(--sp-3); align-items: start; }
+.scr > .card { margin-top: 0; }
+.fl-row { display: grid; grid-template-columns: 1fr 64px 10px 64px; gap: 4px; align-items: center; font-size: var(--fs-sm); padding: 3px 0; }
+.fl-row label { color: var(--text-secondary); }
+.fl-row label.on { color: var(--text-primary); font-weight: 600; }
+.fl-row input { font: inherit; font-size: var(--fs-sm); width: 100%; padding: 3px 5px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page); color: var(--text-primary); text-align: right; }
+.fl-grp { font-size: var(--fs-xs); color: var(--muted); margin: 10px 0 2px; text-transform: none; }
+@media (max-width: 900px) { .scr { grid-template-columns: 1fr; } }
 .stk-search { position: relative; }
 .stk-search input { width: 260px; }
 .stk-sug { position: absolute; right: 0; top: 32px; z-index: 6; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
@@ -351,7 +359,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
 
   <section id="s-stock" role="tabpanel" data-tab="stock">
     <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
-      <button type="button" data-go="stock" aria-pressed="true">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button></div>
+      <button type="button" data-go="stock" aria-pressed="true">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button><button type="button" data-go="screener" aria-pressed="false">스크리너</button></div>
     <div class="row" style="justify-content: space-between; align-items: flex-start">
       <div class="stk-head" id="stk-head"></div>
       <div class="stk-search">
@@ -365,7 +373,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
 
   <section id="s-compare" role="tabpanel" data-tab="compare">
     <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
-      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="true">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button></div>
+      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="true">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button><button type="button" data-go="screener" aria-pressed="false">스크리너</button></div>
     <div class="card-h">
       <div><h2>종목 비교</h2><div class="sub" id="cmp-sub">최대 4종목 · 시작일 = 100 · 수정주가(배당 제외) · 기준선 코스피 200 가격지수</div></div>
       <div class="stk-search">
@@ -457,7 +465,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
 
   <section id="s-valuation" role="tabpanel" data-tab="valuation">
     <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
-      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="true">밸류에이션</button></div>
+      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="true">밸류에이션</button><button type="button" data-go="screener" aria-pressed="false">스크리너</button></div>
     <div class="card-h">
       <div><h2>밸류에이션</h2><div class="sub" id="val-sub">불러오는 중…</div></div>
       <input class="search" id="val-q" placeholder="종목명·코드 검색" aria-label="밸류에이션 검색" style="width:200px">
@@ -477,6 +485,35 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="note">DART 주요계정(연결 우선). TTM = 최근 4개 분기 합. PER = 시가총액 ÷ TTM 당기순이익(비지배지분 포함이라 지배주주 기준과 조금 다르다),
         PBR = 시가총액 ÷ 자본총계, ROE = TTM 순이익 ÷ 평균 자본(지금과 1년 전), 영업이익률 = TTM 영업이익 ÷ TTM 매출, YoY = 최근 분기 vs 1년 전 같은 분기.
         금융업은 매출 항목이 없어 영업이익률이 비고, 부채비율이 원래 높다. 매주 토요일 갱신. 매매 권유가 아니다.</div></div>
+  </section>
+
+  <section id="s-screener" role="tabpanel" data-tab="screener">
+    <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
+      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button><button type="button" data-go="screener" aria-pressed="true">스크리너</button></div>
+    <div class="card-h">
+      <div><h2>종목 스크리너</h2><div class="sub" id="scr-sub">불러오는 중…</div></div>
+    </div>
+    <div class="chips" id="scr-presets" role="group" aria-label="프리셋"></div>
+    <div class="scr">
+      <div class="card">
+        <div class="row" style="justify-content: space-between"><div class="rank-tabs row" id="scr-mkt" role="group" aria-label="시장"></div>
+          <button class="linkbtn" id="scr-reset" type="button">조건 초기화</button></div>
+        <select class="search" id="scr-sec" aria-label="업종" style="width:100%;margin-top:8px"></select>
+        <label class="sub" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="scr-noloss"> 적자 기업 제외</label>
+        <div id="scr-filters"></div>
+        <div class="note">빈칸 = 조건 없음. 조건을 건 지표가 없는 종목은 빠진다(수급·배당은 유니버스 200종목만 있다).</div>
+      </div>
+      <div class="card scroll">
+        <div class="row" style="justify-content: space-between">
+          <div class="sub" id="scr-count"></div>
+          <div class="row"><button class="theme-btn" id="scr-cmp" type="button">선택 종목 비교 →</button><button class="theme-btn" id="scr-watch" type="button">☆ 관심 종목에 추가</button></div>
+        </div>
+        <table id="scr-table" style="margin-top:6px"></table>
+        <button class="theme-btn" id="scr-more" type="button" style="margin-top:8px"></button>
+      </div>
+    </div>
+    <div class="note">지표 정의는 밸류에이션 화면과 같다. 가격 지표는 수정가 기준, 52주 위치 = (종가 − 52주 저가) ÷ (52주 고가 − 52주 저가).
+      조건 검색은 과거 성과를 보장하지 않고, 이 조건들로 만든 전략은 검증하지 않았다. 매매 권유가 아니다.</div>
   </section>
 
   <section id="s-filings" role="tabpanel" data-tab="filings">
@@ -1714,6 +1751,97 @@ function renderValuation() {
   more.hidden = rows.length <= VAL_LIMIT;
   more.textContent = `더 보기 (${(rows.length - VAL_LIMIT).toLocaleString("ko-KR")}종목 남음)`;
 }
+/* ---------- 종목 스크리너 (valuation.js 를 같이 쓴다) ---------- */
+const SCR_F = [
+  ["밸류에이션", "per", "PER", "배", 1], ["밸류에이션", "pbr", "PBR", "배", 1], ["밸류에이션", "roe", "ROE", "%", 100],
+  ["밸류에이션", "opm", "영업이익률", "%", 100], ["밸류에이션", "rev_yoy", "매출 YoY", "%", 100], ["밸류에이션", "op_yoy", "영업이익 YoY", "%", 100],
+  ["밸류에이션", "debt", "부채비율", "%", 100],
+  ["가격", "mcap", "시가총액", "억", 1e-8], ["가격", "r1m", "1개월 수익률", "%", 100], ["가격", "r3m", "3개월 수익률", "%", 100],
+  ["가격", "r1y", "1년 수익률", "%", 100], ["가격", "pos52", "52주 범위 위치", "%", 100], ["가격", "vol60", "60일 변동성", "%", 100],
+  ["수급·배당 (유니버스)", "frgn20", "외국인 20일 순매수/시총", "%", 100], ["수급·배당 (유니버스)", "inst20", "기관 20일 순매수/시총", "%", 100],
+  ["수급·배당 (유니버스)", "dy", "배당수익률", "%", 100],
+];
+const SCR_PRESETS = [
+  ["저PBR·고ROE", { pbr: [null, 1], roe: [10, null], mcap: [1000, null] }, true],
+  ["실적 개선", { op_yoy: [30, null], rev_yoy: [10, null], mcap: [1000, null] }, true],
+  ["고배당", { dy: [4, null] }, false],
+  ["52주 고점 근처", { pos52: [90, null], mcap: [1000, null] }, false],
+  ["외국인 매집", { frgn20: [0.3, null] }, false],
+  ["저평가 대형주", { per: [null, 10], pbr: [null, 1.2], mcap: [10000, null] }, true],
+];
+let SCR = store.get("kq-screen", null) || { f: {}, noloss: false, mkt: "전체", sec: "" };
+let SCR_SORT = "mcap", SCR_DIR = -1, SCR_LIMIT = 100, SCR_PICK = new Set();
+function scrSave() { store.set("kq-screen", SCR); }
+function renderScreener() {
+  if (!VAL) {
+    loadVal().then((x) => { VAL = x; if (TAB === "screener") renderScreener(); })
+      .catch(() => { $("#scr-sub").textContent = "valuation.js 를 불러오지 못했다. 대시보드를 새로 만든 뒤 outputs 폴더째로 열어야 한다."; });
+    return;
+  }
+  const C = VAL.cols, all = VAL.rows.map((r) => Object.fromEntries(C.map((c, i) => [c, r[i]])));
+  // 조건 패널 (처음 한 번만 그리고 값은 SCR 에서)
+  if (!$("#scr-filters").children.length) {
+    let g = null, html = "";
+    for (const [grp, k, l, u] of SCR_F) {
+      if (grp !== g) { html += `<div class="fl-grp">${esc(grp)}</div>`; g = grp; }
+      html += `<div class="fl-row"><label for="scr-${k}-lo" data-k="${k}">${esc(l)} <span class="muted">(${u})</span></label>
+        <input id="scr-${k}-lo" data-k="${k}" data-i="0" inputmode="decimal" placeholder="최소"><span class="muted">~</span>
+        <input id="scr-${k}-hi" data-k="${k}" data-i="1" inputmode="decimal" placeholder="최대"></div>`;
+    }
+    $("#scr-filters").innerHTML = html;
+    $("#scr-filters").querySelectorAll("input").forEach((inp) => inp.addEventListener("input", () => {
+      const k = inp.dataset.k, i = +inp.dataset.i, v = inp.value.trim() === "" ? null : Number(inp.value.replace(/,/g, ""));
+      SCR.f[k] = SCR.f[k] || [null, null]; SCR.f[k][i] = Number.isFinite(v) ? v : null;
+      if (SCR.f[k][0] == null && SCR.f[k][1] == null) delete SCR.f[k];
+      scrSave(); SCR_LIMIT = 100; renderScreener();
+    }));
+    const secs = [...new Set(all.map((r) => r.sector))].sort();
+    $("#scr-sec").innerHTML = `<option value="">전체 업종</option>` + secs.map((x) => `<option>${esc(x)}</option>`).join("");
+    $("#scr-sec").addEventListener("change", () => { SCR.sec = $("#scr-sec").value; scrSave(); renderScreener(); });
+    $("#scr-noloss").addEventListener("change", () => { SCR.noloss = $("#scr-noloss").checked; scrSave(); renderScreener(); });
+    $("#scr-presets").innerHTML = SCR_PRESETS.map(([n], i) => `<button type="button" data-p="${i}">${esc(n)}</button>`).join("");
+    $("#scr-presets").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+      const [, f, noloss] = SCR_PRESETS[+b.dataset.p];
+      SCR = { ...SCR, f: JSON.parse(JSON.stringify(f)), noloss }; scrSave(); SCR_LIMIT = 100; renderScreener();
+    }));
+    $("#scr-reset").addEventListener("click", () => { SCR = { f: {}, noloss: false, mkt: "전체", sec: "" }; scrSave(); renderScreener(); });
+  }
+  for (const [, k] of SCR_F) {
+    const v = SCR.f[k] || [null, null];
+    for (const i of [0, 1]) { const inp = $(`#scr-${k}-${i ? "hi" : "lo"}`); if (document.activeElement !== inp) inp.value = v[i] ?? ""; }
+    document.querySelector(`.fl-row label[data-k="${k}"]`).classList.toggle("on", !!SCR.f[k]);
+  }
+  $("#scr-sec").value = SCR.sec || ""; $("#scr-noloss").checked = !!SCR.noloss;
+  seg($("#scr-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => SCR.mkt, (v) => { SCR.mkt = v; scrSave(); renderScreener(); });
+  const unit = Object.fromEntries(SCR_F.map(([, k, , , m]) => [k, m]));
+  const active = Object.entries(SCR.f);
+  const rows = all.filter((r) => (SCR.mkt === "전체" || r.market === SCR.mkt) && (!SCR.sec || r.sector === SCR.sec) && !(SCR.noloss && r.loss)
+    && active.every(([k, [lo, hi]]) => { const v = r[k]; if (v == null) return false; const x = v * unit[k]; return (lo == null || x >= lo) && (hi == null || x <= hi); }));
+  $("#scr-sub").textContent = `${KDATE(VAL.asof)} 기준 · 코스피·코스닥 ${all.length.toLocaleString("ko-KR")}종목 중 조건으로 걸러낸다 · 조건은 이 브라우저에 저장`;
+  $("#scr-count").textContent = `${rows.length.toLocaleString("ko-KR")}종목` + (active.length ? ` · 조건 ${active.length}개` : " · 조건 없음");
+  const showK = ["mcap", "per", "pbr", "roe", ...active.map(([k]) => k).filter((k) => !["mcap", "per", "pbr", "roe"].includes(k))].slice(0, 9);
+  const labelOf = Object.fromEntries(SCR_F.map(([, k, l]) => [k, l]));
+  const f = (k, v) => v == null ? "–" : k === "mcap" ? krw(v) : unit[k] === 1 ? v.toFixed(k === "pbr" ? 2 : 1) + "배" : (v * 100).toFixed(k === "frgn20" || k === "inst20" ? 2 : 1) + "%";
+  const key = (r) => r[SCR_SORT] ?? (SCR_DIR > 0 ? Infinity : -Infinity);
+  const sorted = [...rows].sort((a, b) => (SCR_SORT === "name" ? a.name.localeCompare(b.name) : key(a) - key(b)) * SCR_DIR);
+  $("#scr-table").innerHTML = `<thead><tr><th></th><th class="sortable" data-k="name">종목</th><th>업종</th>${showK.map((k) => `<th class="num sortable" data-k="${k}">${esc(labelOf[k])}${SCR_SORT === k ? (SCR_DIR > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>` +
+    (sorted.slice(0, SCR_LIMIT).map((r) => `<tr><td><input type="checkbox" data-c="${r.code}" ${SCR_PICK.has(r.code) ? "checked" : ""} aria-label="${esc(r.name)} 선택"></td>
+      <td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}${r.market === "코스닥" ? '<span class="badge">코스닥</span>' : ""}${r.loss ? '<span class="badge">적자</span>' : ""}${WATCH.includes(r.code) ? " ★" : ""}</td>
+      <td class="muted">${esc(r.sector)}</td>${showK.map((k) => `<td class="num ${/yoy|^r1|^r3|roe|frgn|inst/.test(k) ? signCls(r[k]) : ""}">${f(k, r[k])}</td>`).join("")}</tr>`).join("")
+      || `<tr><td colspan="${3 + showK.length}" class="muted">조건에 맞는 종목이 없다</td></tr>`) + "</tbody>";
+  $("#scr-table").querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
+    const k = th.dataset.k; if (SCR_SORT === k) SCR_DIR = -SCR_DIR; else { SCR_SORT = k; SCR_DIR = ["per", "pbr", "debt", "vol60", "name"].includes(k) ? 1 : -1; } renderScreener();
+  }));
+  $("#scr-table").querySelectorAll("input[type=checkbox]").forEach((cb) => cb.addEventListener("change", () => { cb.checked ? SCR_PICK.add(cb.dataset.c) : SCR_PICK.delete(cb.dataset.c); scrButtons(); }));
+  const more = $("#scr-more"); more.hidden = rows.length <= SCR_LIMIT; more.textContent = `더 보기 (${(rows.length - SCR_LIMIT).toLocaleString("ko-KR")}종목 남음)`;
+  scrButtons();
+}
+function scrButtons() {
+  const ok = [...SCR_PICK].filter((c) => STOCK_SET.has(c));
+  $("#scr-cmp").disabled = !ok.length; $("#scr-watch").disabled = !SCR_PICK.size;
+  $("#scr-cmp").textContent = `선택 종목 비교 →${ok.length ? ` (${Math.min(4, ok.length)})` : ""}`;
+  $("#scr-cmp").title = SCR_PICK.size > ok.length ? "상세 데이터가 있는 종목(유니버스·홈 순위·업종 지도)만 비교할 수 있다" : "";
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1944,7 +2072,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "market"];
@@ -1963,7 +2091,7 @@ function showTab(name) {
   if (lab) { LAB_LAST = name; try { localStorage.setItem("kq-lab", name); } catch (e) {} }
   const mk = MKT.includes(name);
   if (mk) { MKT_LAST = name; try { localStorage.setItem("kq-mkt", name); } catch (e) {} }
-  const group = lab ? "lab" : mk ? "mkt" : (name === "compare" || name === "valuation") ? "stock" : name === "etfd" ? "etf" : name;
+  const group = lab ? "lab" : mk ? "mkt" : (name === "compare" || name === "valuation" || name === "screener") ? "stock" : name === "etfd" ? "etf" : name;
   document.querySelectorAll("nav.tabs button").forEach((b) => {
     const on = b.dataset.tab === group;
     b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1;
@@ -1991,6 +2119,16 @@ seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전�
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
 $("#val-q").addEventListener("input", () => { VAL_LIMIT = 50; renderValuation(); });
+$("#scr-more").addEventListener("click", () => { SCR_LIMIT += 100; renderScreener(); });
+$("#scr-cmp").addEventListener("click", () => {
+  const pick = [...SCR_PICK].filter((c) => STOCK_SET.has(c)).slice(0, 4);
+  if (!pick.length) return;
+  CMP = []; pick.forEach(addCompare); location.hash = "#compare";
+});
+$("#scr-watch").addEventListener("click", () => {
+  for (const c of SCR_PICK) if (!WATCH.includes(c) && STOCK_SET.has(c)) toggleWatch(c);
+  SCR_PICK.clear(); renderScreener();
+});
 $("#val-more").addEventListener("click", () => { VAL_LIMIT += 100; renderValuation(); });
 seg($("#val-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => VAL_MKT, (v) => { VAL_MKT = v; VAL_LIMIT = 50; renderValuation(); });
 seg($("#val-cap"), [[0, "시총 전체"], [1e11, "1천억+"], [1e12, "1조+"], [1e13, "10조+"]], () => VAL_CAP, (v) => { VAL_CAP = +v; VAL_LIMIT = 50; renderValuation(); });

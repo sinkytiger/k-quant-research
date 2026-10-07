@@ -469,6 +469,24 @@ def flows_board_section(log) -> dict:
     return {"asof": f"{asof:%Y-%m-%d}", "windows": list(fb.WINDOWS), "rows": rows, "market": market}
 
 
+_PX: dict = {}
+
+
+def price_stats(H: pd.DataFrame, L: pd.DataFrame, C: pd.DataFrame) -> dict:
+    """스크리너용 종목별 가격 지표 (수정가): 1·3·12개월 수익률, 52주 범위 위치, 60일 변동성."""
+    c = C.ffill()
+    last = c.iloc[-1]
+
+    def ret(n):
+        return (last / c.iloc[-n - 1] - 1) if len(c) > n else pd.Series(dtype=float)
+    hmax, lmin = H.iloc[-250:].max(), L.iloc[-250:].min()
+    pos = ((last - lmin) / (hmax - lmin)).where(hmax > lmin)
+    vol = C.pct_change(fill_method=None).iloc[-60:].std() * (252 ** 0.5)
+    df = pd.DataFrame({"r1m": ret(21), "r3m": ret(63), "r1y": ret(250), "pos52": pos, "vol60": vol})
+    df.loc[C.iloc[-250:].notna().sum() < 240, ["r1y", "pos52"]] = float("nan")
+    return {code: row for code, row in df.iterrows()}
+
+
 def highlow_section(log, hist_days: int = 250) -> dict:
     """52주 신고가·신저가: 코스피·코스닥 보통주, 오늘 목록 + 최근 hist_days 거래일 개수."""
     from src import highlow as hl
@@ -490,6 +508,7 @@ def highlow_section(log, hist_days: int = 250) -> dict:
     d = hl.adjusted(tidy)
     H, L, C = (d.pivot(index="Date", columns="code", values=v) for v in ("aH", "aL", "aC"))
     hi, lo, pmax, pmin = hl.flags(H, L)
+    _PX.update(price_stats(H, L, C))
     try:
         from src.universe import kis_master
         sec = kis_master.sectors()
@@ -556,9 +575,10 @@ def _valuation():
     return _VAL["q"], _VAL["m"]
 
 
-def valuation_section(log) -> dict:
+def valuation_section(log, data_ref: dict | None = None) -> dict:
     """밸류에이션 탭: 전 종목 지표 → outputs/valuation.js (탭을 열 때 불러온다)."""
     q, m = _valuation()
+    data_ref = data_ref or {}
     if m.empty:
         return {}
     names = membership.load_names()
@@ -575,13 +595,33 @@ def valuation_section(log) -> dict:
             mk.update({str(c): (label, str(n)) for c, n in zip(r["ISU_CD"], r["ISU_NM"])})
     r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
     cols = ["per", "pbr", "roe", "opm", "rev_yoy", "op_yoy", "debt", "ni_ttm_chg"]
+    xcols = ["r1m", "r3m", "r1y", "pos52", "vol60", "frgn20", "inst20", "dy"]
+    # 수급(20일 순매수 ÷ 시총)·배당수익률은 유니버스 종목만 있다
+    extra = {}
+    fb = data_ref.get("flowboard") or {}
+    wi = (fb.get("windows") or []).index(20) if 20 in (fb.get("windows") or []) else None
+    for r in fb.get("rows", []):
+        if wi is not None and r.get("mcap"):
+            extra[r["code"]] = {"frgn20": (r["f"]["frgn"][wi] or 0) / r["mcap"], "inst20": (r["f"]["inst"][wi] or 0) / r["mcap"]}
+    from src.data import dividends
+    asof = pd.Timestamp(krx_daily.saved_days("stk")[-1])
+    for c in membership.current_members():
+        dv = dividends.load(c)
+        px = _PX.get(c)
+        cap = m["mcap"].get(c) if c in m.index else None
+        if len(dv) and px is not None:
+            ttm = dv[(dv["record_date"] > asof - pd.Timedelta(days=365)) & (dv["record_date"] <= asof)]["dps"].sum()
+            close = prices.load(c)["Close"].dropna()
+            if ttm and len(close):
+                extra.setdefault(c, {})["dy"] = float(ttm / close.iloc[-1])
     rows = []
     for c, r in m.iterrows():
         if c not in mk:
             continue
         rows.append([c, mk[c][1] or names.get(c, c), mk[c][0], sec.get(c, "기타"), r4(r["mcap"]), r["label"],
-                     *[r4(r[k]) for k in cols], int(bool(r["loss"]))])
-    meta = {"cols": ["code", "name", "market", "sector", "mcap", "label", *cols, "loss"],
+                     *[r4(r[k]) for k in cols], int(bool(r["loss"])),
+                     *[r4((_PX.get(c, {}) if k in ("r1m", "r3m", "r1y", "pos52", "vol60") else extra.get(c, {})).get(k)) for k in xcols]])
+    meta = {"cols": ["code", "name", "market", "sector", "mcap", "label", *cols, "loss", *xcols],
             "asof": f"{krx_daily.saved_days('stk')[-1]:%Y-%m-%d}"}
     out = config.OUTPUTS / "valuation.js"
     out.write_text("window.KQ_VAL=" + json.dumps(clean({**meta, "rows": rows}), ensure_ascii=False, separators=(",", ":")) + ";\n",
@@ -779,7 +819,7 @@ def main(argv=None) -> int:
     data["flowboard"] = flows_board_section(log)
     data["highlow"] = highlow_section(log)
     etf_detail_section(log, data["etf"].get("rows", []))
-    data["valuation"] = valuation_section(log)
+    data["valuation"] = valuation_section(log, data)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
