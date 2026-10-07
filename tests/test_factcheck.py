@@ -36,6 +36,8 @@ def test_topic_shares_and_rule():
     titles = ["코스피 급락 이유", "이 종목 매수 타이밍", "엔비디아 실적", "오늘 점심 메뉴", None]
     kr, fo = tr.topic_shares(titles)
     assert kr == pytest.approx(2 / 4) and fo == pytest.approx(1 / 4)
+    kr2, fo2 = tr.topic_shares(["미국주식 지금 사도 될까", "코스닥 급등주"])
+    assert kr2 == pytest.approx(1 / 2) and fo2 == pytest.approx(1 / 2)
     assert tr.topic_ok(kr, fo)
     assert not tr.topic_ok(0.39, 0.0)
     assert not tr.topic_ok(0.5, 0.6)

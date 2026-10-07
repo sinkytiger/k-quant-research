@@ -111,13 +111,14 @@ def is_excluded(title: str, description: str = "") -> str | None:
 
 
 def topic_shares(titles) -> tuple[float, float]:
-    """(국내 주식 단어 포함 비율, 해외·코인 단어 포함 비율). 제목이 없으면 (0, 0)."""
+    """(국내 비율, 해외·코인 비율). 제목이 없으면 (0, 0).
+    v1.4: 해외 단어가 있는 제목은 국내로 세지 않는다("미국주식"의 "주식" 중복 방지)."""
     ts = [str(t) for t in titles if isinstance(t, str) and t]
     if not ts:
         return 0.0, 0.0
-    kr = sum(any(w in t for w in DOMESTIC_WORDS) for t in ts) / len(ts)
-    fo = sum(any(w.lower() in t.lower() for w in FOREIGN_WORDS) for t in ts) / len(ts)
-    return kr, fo
+    is_fo = [any(w.lower() in t.lower() for w in FOREIGN_WORDS) for t in ts]
+    kr = sum(any(w in t for w in DOMESTIC_WORDS) and not f for t, f in zip(ts, is_fo)) / len(ts)
+    return kr, sum(is_fo) / len(ts)
 
 
 def topic_ok(kr: float, fo: float) -> bool:
@@ -216,7 +217,19 @@ def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | N
             checked.append({"channel_id": row.channel_id, "status": "manual_exclude",
                             "reason": manual_exclude[row.channel_id]})
             continue
-        vids = list_videos(row.uploads, *PERIOD)
+        cache = fc_dir() / "videos" / f"{row.channel_id}.csv"
+        too_many = fc_dir() / "videos" / f"{row.channel_id}.too_many"
+        if too_many.exists():
+            vids = None
+        elif cache.exists():
+            vids = pd.read_csv(cache)
+            vids["in_period"] = vids["in_period"].astype(bool)
+        else:
+            vids = list_videos(row.uploads, *PERIOD)
+            if vids is None:
+                too_many.touch()
+            else:
+                vids.to_csv(cache, index=False, encoding="utf-8-sig")
         if vids is None:
             checked.append({"channel_id": row.channel_id, "title": row.title, "status": "too_many_videos"})
             log.info("%s 구독자 %s 구간 영상 %d개 초과 → too_many_videos", row.title, row.subscribers, MAX_VIDEOS)
@@ -231,7 +244,6 @@ def select_channels(cands: pd.DataFrame, log, manual_exclude: dict[str, str] | N
                  row.title, row.subscribers, n, kr * 100, fo * 100, status)
         if ok:
             picked.append(row._asdict())
-            vids.to_csv(fc_dir() / "videos" / f"{row.channel_id}.csv", index=False, encoding="utf-8-sig")
         if len(picked) == N_CHANNELS:
             break
     pd.DataFrame(checked).to_csv(fc_dir() / "selection_log.csv", index=False, encoding="utf-8-sig")
