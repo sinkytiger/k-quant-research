@@ -1130,7 +1130,12 @@ function renderDetail() {
   if (!r) { $("#detail-head").innerHTML = ""; $("#ch-candle").innerHTML = ""; return; }
   $("#detail-head").innerHTML = `<h3>${esc(r.name)} <span class="muted" style="font-size:12px">${r.code} · ${r.market}</span></h3>
     <div style="font-size:18px;font-weight:650;margin-top:4px">${Math.round(r.close).toLocaleString("ko-KR")}원 <span class="${signCls(r.pct)}" style="font-size:14px">${sgn(r.pct) + Math.abs(r.pct * 100).toFixed(2)}%</span></div>`;
-  candleChart($("#ch-candle"), H.candles[r.code] || []);
+  const want = r.code, host = $("#ch-candle");
+  host.innerHTML = '<div class="note">불러오는 중…</div>';
+  const draw = (k) => { if (SEL_CODE === want) candleChart(host, k || []); };
+  if (r.market === "ETF") ensureData(["hcandles"]).then(() => draw((D.hcandles || {})[want])).catch(() => draw([]));
+  else if (STOCK_SET.has(want)) loadStock(want).then((S) => draw(S.candles.slice(-100))).catch(() => draw([]));
+  else draw([]);
   $("#detail-link").innerHTML = STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">수급·뉴스·공시까지 자세히 보기 →</a>`
     : r.market === "ETF" ? `<a href="#etf:${r.code}">괴리율·자금 흐름·같은 지수 ETF 보기 →</a>` : "";
 }
@@ -2308,6 +2313,19 @@ const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow"
 let LAB_LAST = "research", MKT_LAST = "flows";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
 try { const v = localStorage.getItem("kq-mkt"); if (MKT.includes(v)) MKT_LAST = v; } catch (e) {}
+/* 탭을 열 때 필요한 데이터 (첫 화면을 가볍게: 나머지는 outputs/data/<키>.js) */
+const NEED = { overview: ["market"], market: ["market", "regime", "mval"], compare: ["market"], filings: ["research"], research: ["research"],
+  monitor: ["monitor"], mrank: ["mrank"], etf: ["etf"], etfd: ["etf"] };
+function ensureData(keys) {
+  const lazy = new Set(D.lazy || []);
+  return Promise.all(keys.filter((k) => !(k in D) && lazy.has(k)).map((k) => new Promise((ok, fail) => {
+    const sc = document.createElement("script");
+    sc.src = `data/${k}.js?v=${encodeURIComponent(D.generated)}`;
+    sc.onload = () => { if (window.KQ_D && k in window.KQ_D) { D[k] = window.KQ_D[k]; ok(); } else fail(); };
+    sc.onerror = () => fail();
+    document.head.appendChild(sc);
+  })));
+}
 function showTab(name) {
   if (name && name.startsWith("etf:")) { ETF_CODE = name.slice(4); name = "etfd"; }
   if (name && name.startsWith("stock:")) { STK_CODE = name.slice(6); try { localStorage.setItem("kq-stock", STK_CODE); } catch (e) {} name = "stock"; }
@@ -2330,12 +2348,15 @@ function showTab(name) {
   document.querySelectorAll("#subnav button, #subnav-mkt button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   document.querySelectorAll("section[role=tabpanel]").forEach((s) => (s.hidden = s.dataset.tab !== name));
   hideTip();
-  RENDER[name]();
+  const need = (NEED[name] || []).filter((k) => !(k in D));
+  if (need.length) ensureData(need).then(() => { if (TAB === name) RENDER[name](); })
+    .catch(() => { const sec = document.querySelector(`section[data-tab="${name}"]`); if (sec) sec.insertAdjacentHTML("afterbegin", '<div class="banner">이 탭의 데이터(data/*.js)를 불러오지 못했다. 대시보드를 새로 만든 뒤 outputs 폴더째로 열어야 한다.</div>'); });
+  else RENDER[name]();
   const h = name === "stock" && STK_CODE ? "stock:" + STK_CODE : name === "etfd" && ETF_CODE ? "etf:" + ETF_CODE : name;
   if (location.hash.slice(1) !== h) history.replaceState(null, "", "#" + h);
   if (name === "stock" || name === "etfd") scrollTo(0, 0);
 }
-function renderAll() { RENDER[TAB](); }
+function renderAll() { const need = (NEED[TAB] || []).filter((k) => !(k in D)); if (!need.length) RENDER[TAB](); }
 
 /* ---------- 컨트롤 ---------- */
 function seg(host, items, get, set) {

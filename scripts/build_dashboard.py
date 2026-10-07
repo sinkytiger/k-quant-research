@@ -319,7 +319,7 @@ def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
     used = sorted({c for d in lists.values() for v in d.values() for c in v})
     R = R[R["code"].isin(used)].drop_duplicates("code")
 
-    # 캔들: 주식은 수정주가 파일, ETF 는 스냅샷 원시가
+    # 캔들: ETF 만 스냅샷 원시가로 (주식은 화면이 종목 상세 파일 stocks/<코드>.js 의 일봉을 불러 쓴다)
     candles = {}
     etf_codes = set(R.loc[R["market"] == "ETF", "code"])
     if etf_codes:
@@ -332,11 +332,6 @@ def home_section(log, top: int = 30, candle_days: int = 100) -> dict:
             candles[code] = [[d[2:], o, h, l, c, v] for d, o, h, l, c, v in
                              zip(g["BAS_DD"], num("TDD_OPNPRC"), num("TDD_HGPRC"), num("TDD_LWPRC"), num("TDD_CLSPRC"), num("ACC_TRDVOL"))
                              if c and c > 0]
-    for code in R.loc[R["market"] != "ETF", "code"]:
-        df = prices.load(code).tail(candle_days)
-        candles[code] = [[f"{d:%y%m%d}", round(o, 2) if o == o else None, round(h, 2) if h == h else None,
-                          round(l, 2) if l == l else None, round(c, 2), int(v) if v == v else 0]
-                         for d, o, h, l, c, v in zip(df.index, df["Open"], df["High"], df["Low"], df["Close"], df["Volume"])]
 
     # 최근·다가오는 배당 (유니버스, 기준일 −30일 ~ +120일). 연말 배당은 보통 11~12월에 공시돼야 나타난다
     today = pd.Timestamp.today().normalize()
@@ -1040,6 +1035,23 @@ def monitor(log) -> dict:
     return {"asof": f"{last:%Y-%m-%d}", "rows": rows}
 
 
+# 첫 화면(홈)에 필요 없는 큰 데이터 — 그 탭을 처음 열 때 data/<키>.js 를 불러온다
+LAZY = ("etf", "regime", "research", "market", "mval", "monitor", "mrank", "hcandles")
+
+
+def write_lazy(data: dict, keys) -> list[str]:
+    d = config.OUTPUTS / "data"
+    d.mkdir(parents=True, exist_ok=True)
+    done = []
+    for k in keys:
+        if k not in data:
+            continue
+        body = json.dumps(clean(data.pop(k)), ensure_ascii=False, default=str, separators=(",", ":"))
+        (d / f"{k}.js").write_text(f"(window.KQ_D=window.KQ_D||{{}})[{json.dumps(k)}]={body};\n", encoding="utf-8")
+        done.append(k)
+    return done
+
+
 def main(argv=None) -> int:
     log = cli.setup("build_dashboard")
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "status": data_status(),
@@ -1058,6 +1070,8 @@ def main(argv=None) -> int:
     data["valuation"] = valuation_section(log, data)
     data["earnings"] = earnings_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
+    data["hcandles"] = data["home"].pop("candles", {})
+    data["lazy"] = write_lazy(data, LAZY)
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))
     OUT.parent.mkdir(parents=True, exist_ok=True)
