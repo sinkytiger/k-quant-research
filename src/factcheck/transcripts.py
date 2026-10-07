@@ -61,6 +61,14 @@ def hash_path() -> Path:
 
 # ---------------------------------------------------------------- YouTube Data API
 
+class ApiError(RuntimeError):
+    """요청 URL(키 포함)을 담지 않는 오류. requests 의 HTTPError 는 메시지에 URL 을 넣어 키가 새므로 쓰지 않는다."""
+
+    def __init__(self, resource: str, status: int, reason: str):
+        super().__init__(f"YouTube API {resource} {status}: {reason}")
+        self.status = status
+
+
 def call(resource: str, params: dict, retries: int = 4) -> dict:
     key = os.environ.get("YOUTUBE_API_KEY")
     if not key:
@@ -71,8 +79,13 @@ def call(resource: str, params: dict, retries: int = 4) -> dict:
             time.sleep(2 ** i)
             continue
         if r.status_code == 403 and "quotaExceeded" in r.text:
-            raise RuntimeError("YouTube API 일 할당량 소진. 내일(태평양 자정) 이어서 실행")
-        r.raise_for_status()
+            raise ApiError(resource, 403, "일 할당량 소진. 내일(태평양 자정) 이어서 실행")
+        if not r.ok:
+            try:
+                reason = r.json()["error"]["message"]
+            except Exception:  # noqa: BLE001
+                reason = r.reason
+            raise ApiError(resource, r.status_code, reason)
         return r.json()
     raise RuntimeError(f"{resource} 재시도 {retries}회 실패")
 
@@ -163,8 +176,13 @@ def list_videos(uploads: str, start: str, end: str) -> pd.DataFrame | None:
     rows, token = [], None
     lo, hi = pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)
     while True:
-        body = call("playlistItems", {"part": "contentDetails,snippet", "playlistId": uploads, "maxResults": 50,
-                                      **({"pageToken": token} if token else {})})
+        try:
+            body = call("playlistItems", {"part": "contentDetails,snippet", "playlistId": uploads, "maxResults": 50,
+                                          **({"pageToken": token} if token else {})})
+        except ApiError as e:
+            if e.status == 404 and not rows:  # 업로드가 없는 채널은 업로드 재생목록이 없다
+                break
+            raise
         items = body.get("items", [])
         for it in items:
             pub = it["contentDetails"].get("videoPublishedAt")

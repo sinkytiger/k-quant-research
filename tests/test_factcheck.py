@@ -66,3 +66,23 @@ def test_freeze_writes_hash_and_refuses_refreeze(tmp_data, monkeypatch, tmp_path
     tr.channels_path().write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(RuntimeError, match="해시"):
         tr.load_channels()
+
+
+def test_api_error_does_not_leak_key(monkeypatch):
+    class R:
+        ok, status_code, reason, text = False, 404, "Not Found", "{}"
+        def json(self):
+            return {"error": {"message": "playlist not found"}}
+    monkeypatch.setenv("YOUTUBE_API_KEY", "AIzaSECRET")
+    monkeypatch.setattr(tr.requests, "get", lambda *a, **k: R())
+    with pytest.raises(tr.ApiError) as e:
+        tr.call("playlistItems", {"playlistId": "UUx"})
+    assert "AIzaSECRET" not in str(e.value) and e.value.status == 404
+
+
+def test_list_videos_empty_channel(monkeypatch):
+    def boom(*a, **k):
+        raise tr.ApiError("playlistItems", 404, "not found")
+    monkeypatch.setattr(tr, "call", boom)
+    df = tr.list_videos("UUx", "2025-10-01", "2026-09-30")
+    assert df is not None and len(df) == 0
