@@ -42,16 +42,16 @@ def step_panels(kt: pd.DataFrame, days: pd.DatetimeIndex, codes: list[str]) -> d
     pos = days.searchsorted(kt["rcept_dt"].values, side="right")
     kt = kt[pos < len(days)]
     kt["known"] = days[pos[pos < len(days)]]
-    kt["qend"] = [quarter_end(p) for p in kt["period"]]
+    kt["qend"] = [float(quarter_end(p).toordinal()) for p in kt["period"]]  # 날짜 서수 (pandas 버전마다 다른 시간 단위를 피한다)
     for code, g in kt.sort_values(["known", "period"]).groupby("stock_code"):
         g = g.drop_duplicates("known", keep="last")
         g = g[g["period"] == g["period"].cummax()]  # 늦게 들어온 옛 분기 정정본이 최신 분기를 덮지 않게
         idx = g.set_index("known")
         for k in ("ni_ttm", "equity", "avg_eq"):
             out[k][code] = idx[k].reindex(days).ffill()
-        out["qend"][code] = pd.Series(idx["qend"].astype("int64").astype(float), index=idx.index).reindex(days).ffill()
+        out["qend"][code] = idx["qend"].reindex(days).ffill()
     # 오래된 재무는 쓰지 않는다
-    age = (days.values.astype("datetime64[ns]").astype("int64")[:, None] - out["qend"].to_numpy()) / 86400e9
+    age = np.array([d.toordinal() for d in days], dtype=float)[:, None] - out["qend"].to_numpy(dtype=float)
     stale = pd.DataFrame(age > STALE_DAYS, index=days, columns=codes) | out["qend"].isna()
     for k in ("ni_ttm", "equity", "avg_eq"):
         out[k] = out[k].mask(stale)
