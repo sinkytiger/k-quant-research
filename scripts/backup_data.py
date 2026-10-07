@@ -1,4 +1,5 @@
 """수집 데이터 백업: KQ_DATA_DIR 를 zip 으로 묶어 OneDrive\KQuantBackup 에 둔다 (최근 KQ_BACKUP_KEEP 개, 기본 2).
+여러 곳에 두려면 .env 에 KQ_BACKUP_DIR=경로1;경로2 (예: OneDrive 와 구글 드라이브). 한 번 만들고 나머지는 복사한다.
 
   python scripts/backup_data.py               # run_weekly.bat 에서 돈다
   python scripts/backup_data.py --list        # 지금 있는 백업
@@ -27,27 +28,39 @@ def default_dest() -> Path:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dest", default=os.environ.get("KQ_BACKUP_DIR") or str(default_dest()))
+    ap.add_argument("--dest", default=os.environ.get("KQ_BACKUP_DIR") or str(default_dest()), help="여러 곳은 ; 로 구분")
     ap.add_argument("--keep", type=int, default=int(os.environ.get("KQ_BACKUP_KEEP", "2")))
     ap.add_argument("--list", action="store_true")
     a = ap.parse_args(argv)
     log = cli.setup("backup_data")
-    dest = Path(a.dest)
+    dests = [Path(x.strip()) for x in a.dest.split(";") if x.strip()]
     if a.list:
-        for z in sorted(dest.glob(f"{backup.PREFIX}*.zip")):
-            print(f"{z.name}  {z.stat().st_size / 1024 ** 2:,.0f}MB")
+        for d in dests:
+            print(f"[{d}]")
+            for z in sorted(d.glob(f"{backup.PREFIX}*.zip")):
+                print(f"  {z.name}  {z.stat().st_size / 1024 ** 2:,.0f}MB")
         return 0
     if config.DATA.resolve() == (config.ROOT / "data").resolve() and not config.DATA.exists():
         log.error("데이터 폴더가 없다: %s", config.DATA)
         return 1
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=config.ROOT, capture_output=True, text=True).stdout.strip()
     t = time.time()
-    out, man = backup.make(config.DATA, dest, {"git": commit})
+    out, man = backup.make(config.DATA, dests[0], {"git": commit})
     log.info("백업 %s: 파일 %s개, 원본 %.0fMB → zip %.0fMB (%.0f초)", out, f"{man['files']:,}", man["bytes"] / 1024 ** 2,
              man["zip_bytes"] / 1024 ** 2, time.time() - t)
-    for f in backup.rotate(dest, a.keep):
-        log.info("오래된 백업 삭제: %s", f.name)
-    return 0
+    rc = 0
+    for d in dests[1:]:
+        try:
+            copied = backup.copy_to(out, d)
+            log.info("복사 %s", copied)
+        except OSError as e:  # 드라이브가 연결돼 있지 않거나 꽉 찼을 때 — 첫 위치 백업은 이미 끝났다
+            log.warning("복사 실패 %s: %s", d, e)
+            rc = 2
+    for d in dests:
+        if d.exists():
+            for f in backup.rotate(d, a.keep):
+                log.info("오래된 백업 삭제: %s", f)
+    return rc
 
 
 if __name__ == "__main__":

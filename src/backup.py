@@ -71,6 +71,16 @@ def verify(zip_path: Path, expect_files: int | None = None) -> dict:
     return man
 
 
+def copy_to(zip_path: Path, dest_dir: Path) -> Path:
+    """다른 위치(구글 드라이브 등)로 복사. 임시 이름으로 쓴 뒤 바꿔서 동기화 앱이 반쪽 파일을 올리지 않게."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out = dest_dir / zip_path.name
+    tmp = dest_dir / (zip_path.name + ".part")
+    shutil.copy2(zip_path, tmp)
+    os.replace(tmp, out)
+    return out
+
+
 def rotate(dest_dir: Path, keep: int) -> list[Path]:
     """오래된 백업을 지우고 지운 목록을 돌려준다 (최근 keep 개 유지, 최소 1개)."""
     zips = sorted(dest_dir.glob(f"{PREFIX}*.zip"))

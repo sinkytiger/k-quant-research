@@ -43,3 +43,12 @@ def test_restore_refuses_nonempty(tmp_path):
     with pytest.raises(FileExistsError):
         backup.restore(z, new)
     backup.restore(z, new, force=True)
+
+
+def test_copy_to_second_place(tmp_path):
+    src, a, b = tmp_path / "data", tmp_path / "a", tmp_path / "b"
+    _data(src)
+    z, _ = backup.make(src, a)
+    out = backup.copy_to(z, b)
+    assert out.read_bytes() == z.read_bytes() and not list(b.glob("*.part"))
+    backup.verify(out)
