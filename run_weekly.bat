@@ -1,5 +1,5 @@
 @echo off
-REM K-Quant 주간 점검: 데이터 상태 + 페이퍼 게이트 리포트 + 데이터 백업(OneDrive\KQuantBackup)
+REM K-Quant 주간 점검: 데이터 상태 + 페이퍼 게이트 리포트 + DART 재무 갱신 + 데이터 백업(OneDrive\KQuantBackup)
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
@@ -13,6 +13,8 @@ set "LOG=logs\weekly_%TODAY%.log"
 "%PY%" scripts\collect_flows.py --status >> "%LOG%" 2>&1
 "%PY%" scripts\collect_marketcap.py --status >> "%LOG%" 2>&1
 "%PY%" scripts\paper_track.py --report >> "%LOG%" 2>&1
+"%PY%" scripts\collect_fin.py --update >> "%LOG%" 2>&1
+echo [fin] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\backup_data.py >> "%LOG%" 2>&1
 echo [backup] exit %errorlevel% >> "%LOG%"
 endlocal

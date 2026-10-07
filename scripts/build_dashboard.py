@@ -532,6 +532,77 @@ def etf_detail_section(log, etf_rows: list[dict], days: int = 250) -> None:
     log.info("ETF 상세 %d개 (새로 쓴 파일 %d개)", len(payloads), n)
 
 
+_VAL = {}
+
+
+def _valuation():
+    """(분기 손익 표, 종목별 지표) — 한 번만 계산해 종목 상세·밸류에이션 탭이 같이 쓴다."""
+    if "m" not in _VAL:
+        from src import valuation as v
+        from src.data import dart_fin
+
+        fin = dart_fin.load_all()
+        if fin.empty:
+            _VAL.update(q=pd.DataFrame(), m=pd.DataFrame())
+            return _VAL["q"], _VAL["m"]
+        q = v.quarterly(v.wide(fin))
+        mc = {}
+        for ds in ("stk", "ksq"):
+            days = krx_daily.saved_days(ds)
+            if days:
+                r = krx_daily.load_snapshots(ds, start=days[-1])
+                mc.update(dict(zip(r["ISU_CD"].astype(str), r["MKTCAP"].map(krx_api.to_num))))
+        _VAL.update(q=q, m=v.metrics(q, mc))
+    return _VAL["q"], _VAL["m"]
+
+
+def valuation_section(log) -> dict:
+    """밸류에이션 탭: 전 종목 지표 → outputs/valuation.js (탭을 열 때 불러온다)."""
+    q, m = _valuation()
+    if m.empty:
+        return {}
+    names = membership.load_names()
+    try:
+        from src.universe import kis_master
+        sec = kis_master.sectors()
+    except Exception:  # noqa: BLE001
+        sec = {}
+    mk = {}
+    for ds, label in (("ksq", "코스닥"), ("stk", "코스피")):
+        days = krx_daily.saved_days(ds)
+        if days:
+            r = krx_daily.load_snapshots(ds, start=days[-1])
+            mk.update({str(c): (label, str(n)) for c, n in zip(r["ISU_CD"], r["ISU_NM"])})
+    r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
+    cols = ["per", "pbr", "roe", "opm", "rev_yoy", "op_yoy", "debt", "ni_ttm_chg"]
+    rows = []
+    for c, r in m.iterrows():
+        if c not in mk:
+            continue
+        rows.append([c, mk[c][1] or names.get(c, c), mk[c][0], sec.get(c, "기타"), r4(r["mcap"]), r["label"],
+                     *[r4(r[k]) for k in cols], int(bool(r["loss"]))])
+    meta = {"cols": ["code", "name", "market", "sector", "mcap", "label", *cols, "loss"],
+            "asof": f"{krx_daily.saved_days('stk')[-1]:%Y-%m-%d}"}
+    out = config.OUTPUTS / "valuation.js"
+    out.write_text("window.KQ_VAL=" + json.dumps(clean({**meta, "rows": rows}), ensure_ascii=False, separators=(",", ":")) + ";\n",
+                   encoding="utf-8")
+    log.info("밸류에이션 %d종목 (PER 있음 %d, 파일 %.0fKB)", len(rows), sum(1 for x in rows if x[6] is not None), out.stat().st_size / 1024)
+    return {**meta, "n": len(rows)}
+
+
+def fin_block(code: str) -> dict:
+    """종목 상세 실적 카드: 지표 + 최근 8분기 [라벨, 매출, 영업이익, 순이익]."""
+    from src import valuation as v
+
+    q, m = _valuation()
+    if m.empty or code not in m.index:
+        return {}
+    r = m.loc[code]
+    keys = ("label", "per", "pbr", "roe", "opm", "rev_yoy", "op_yoy", "debt", "rev_ttm", "op_ttm", "ni_ttm", "loss")
+    return {**{k: (None if (r[k] is None or (isinstance(r[k], float) and r[k] != r[k])) else (bool(r[k]) if k == "loss" else r[k]))
+               for k in keys}, "rcept": None if pd.isna(r["rcept_dt"]) else f"{r['rcept_dt']:%Y-%m-%d}", "hist": v.history(q, code, 8)}
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -562,7 +633,7 @@ def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
         payloads[c] = {"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
                        "asof": f"{asof:%Y-%m-%d}", "mcap": info["mcap"], "stats": st, "candles": sd.ohlcv(px),
                        "flows": sd.flow_block(flows.load(c)), "news": sd.news_block(news.load(c)),
-                       "dart": sd.dart_block(by_code.get(c, pd.DataFrame())), "div": div}
+                       "dart": sd.dart_block(by_code.get(c, pd.DataFrame())), "div": div, "fin": fin_block(c)}
         index.append({"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
                       "mcap": info["mcap"]})
     n = sd.write_all(config.OUTPUTS / "stocks", clean(payloads))
@@ -708,6 +779,7 @@ def main(argv=None) -> int:
     data["flowboard"] = flows_board_section(log)
     data["highlow"] = highlow_section(log)
     etf_detail_section(log, data["etf"].get("rows", []))
+    data["valuation"] = valuation_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(clean(data), ensure_ascii=False, default=str))

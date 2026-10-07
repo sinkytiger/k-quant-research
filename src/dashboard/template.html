@@ -351,7 +351,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
 
   <section id="s-stock" role="tabpanel" data-tab="stock">
     <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
-      <button type="button" data-go="stock" aria-pressed="true">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button></div>
+      <button type="button" data-go="stock" aria-pressed="true">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button></div>
     <div class="row" style="justify-content: space-between; align-items: flex-start">
       <div class="stk-head" id="stk-head"></div>
       <div class="stk-search">
@@ -365,7 +365,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
 
   <section id="s-compare" role="tabpanel" data-tab="compare">
     <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
-      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="true">비교</button></div>
+      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="true">비교</button><button type="button" data-go="valuation" aria-pressed="false">밸류에이션</button></div>
     <div class="card-h">
       <div><h2>종목 비교</h2><div class="sub" id="cmp-sub">최대 4종목 · 시작일 = 100 · 수정주가(배당 제외) · 기준선 코스피 200 가격지수</div></div>
       <div class="stk-search">
@@ -453,6 +453,30 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
       <div class="stk-head" id="etfd-head"></div>
     </div>
     <div id="etfd-body"></div>
+  </section>
+
+  <section id="s-valuation" role="tabpanel" data-tab="valuation">
+    <div class="subnav rank-tabs row stk-mode" role="group" aria-label="보기" style="margin:0 0 12px">
+      <button type="button" data-go="stock" aria-pressed="false">상세</button><button type="button" data-go="compare" aria-pressed="false">비교</button><button type="button" data-go="valuation" aria-pressed="true">밸류에이션</button></div>
+    <div class="card-h">
+      <div><h2>밸류에이션</h2><div class="sub" id="val-sub">불러오는 중…</div></div>
+      <input class="search" id="val-q" placeholder="종목명·코드 검색" aria-label="밸류에이션 검색" style="width:200px">
+    </div>
+    <div class="ctl-row">
+      <div class="rank-tabs row" id="val-mkt" role="group" aria-label="시장"></div>
+      <div class="rank-tabs row" id="val-cap" role="group" aria-label="시가총액"></div>
+      <select class="search" id="val-sec" aria-label="업종"></select>
+    </div>
+    <div class="grid2" style="grid-template-columns: 1.4fr 1fr">
+      <div class="card"><div class="sub">PBR (가로, 로그 눈금) · ROE (세로) — 점 크기 = 시가총액, 누르면 종목 상세</div><div class="chart" id="ch-val"></div>
+        <div class="note">왼쪽 위(낮은 PBR·높은 ROE)일수록 자본 대비 싸고 수익성이 좋은 쪽. 적자·자본잠식 종목은 빠진다.</div></div>
+      <div class="card scroll"><div class="sub" style="margin-bottom:6px">업종별 중앙값 (선택한 시장·시총 조건)</div><table id="val-sec-table"></table></div>
+    </div>
+    <div class="card scroll"><table id="val-table"></table>
+      <button class="theme-btn" id="val-more" type="button" style="margin-top:8px"></button>
+      <div class="note">DART 주요계정(연결 우선). TTM = 최근 4개 분기 합. PER = 시가총액 ÷ TTM 당기순이익(비지배지분 포함이라 지배주주 기준과 조금 다르다),
+        PBR = 시가총액 ÷ 자본총계, ROE = TTM 순이익 ÷ 평균 자본(지금과 1년 전), 영업이익률 = TTM 영업이익 ÷ TTM 매출, YoY = 최근 분기 vs 1년 전 같은 분기.
+        금융업은 매출 항목이 없어 영업이익률이 비고, 부채비율이 원래 높다. 매주 토요일 갱신. 매매 권유가 아니다.</div></div>
   </section>
 
   <section id="s-filings" role="tabpanel" data-tab="filings">
@@ -1161,6 +1185,18 @@ function drawStock(S) {
           : `<div class="note">${S.market === "코스피" ? "최근 6개월 공시 없음" + (insider ? ` (임원·주요주주 소유 보고 ${insider}건 제외)` : "") : "공시 목록은 유가증권(코스피)만 받는다"}</div>`}
       </div>
     </div>
+    ${(() => {
+      const F = S.fin || {};
+      if (!F.hist || !F.hist.length) return `<div class="card"><div class="sub">실적·밸류에이션</div><div class="note">DART 재무 데이터 없음</div></div>`;
+      const jo2 = (v) => v == null ? "–" : (Math.abs(v) >= 1e12 ? (v / 1e12).toFixed(2) + "조" : Math.round(v / 1e8).toLocaleString("ko-KR") + "억");
+      const t = [["PER (TTM)", F.loss ? "적자" : mult(F.per)], ["PBR", mult(F.pbr, 2)], ["ROE (TTM)", fmtPct(F.roe)], ["영업이익률 (TTM)", fmtPct(F.opm)],
+                 ["매출 YoY", fmtPct(F.rev_yoy, 0)], ["부채비율", F.debt == null ? "–" : (F.debt * 100).toFixed(0) + "%"]];
+      return `<div class="card"><div class="card-h"><div class="sub">실적·밸류에이션 (DART ${F.label} · ${F.rcept || ""} 접수, 연결 우선)</div><a href="#valuation" class="sub" style="color:var(--series-1);text-decoration:none">전 종목 밸류에이션 →</a></div>
+        <div class="tiles" style="margin-top:0;grid-template-columns:repeat(auto-fit,minmax(120px,1fr))">${t.map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value" style="font-size:20px">${v}</div></div>`).join("")}</div>
+        <table style="margin-top:10px"><thead><tr><th>분기</th><th class="num">매출</th><th class="num">영업이익</th><th class="num">순이익</th><th class="num">영업이익률</th></tr></thead><tbody>
+        ${[...F.hist].reverse().map(([l, rv, op, ni]) => `<tr><td>${l}</td><td class="num">${jo2(rv)}</td><td class="num ${signCls(op)}">${jo2(op)}</td><td class="num ${signCls(ni)}">${jo2(ni)}</td>
+          <td class="num">${rv && op != null ? fmtPct(op / rv) : "–"}</td></tr>`).join("")}</tbody></table></div>`;
+    })()}
     <div class="note">표시용 정보이며 매매 권유가 아니다.</div>`;
   seg($("#stk-range"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => STK_RANGE, (v) => { STK_RANGE = +v; candleChart($("#ch-stk"), S.candles.slice(-STK_RANGE)); });
   candleChart($("#ch-stk"), S.candles.slice(-STK_RANGE));
@@ -1579,6 +1615,105 @@ function drawEtf(R, E, rows) {
   seg($("#etfd-range"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => ETF_RANGE, (v) => { ETF_RANGE = +v; draw(); });
   draw();
 }
+/* ---------- 밸류에이션 (valuation.js 를 열 때 불러온다) ---------- */
+let VAL = null, VAL_MKT = "전체", VAL_CAP = 1e11, VAL_SEC = "", VAL_SORT = "mcap", VAL_DIR = -1, VAL_LIMIT = 50;
+function loadVal() {
+  if (window.KQ_VAL) return Promise.resolve(window.KQ_VAL);
+  return new Promise((ok, fail) => {
+    const sc = document.createElement("script");
+    sc.src = `valuation.js?v=${encodeURIComponent(D.generated)}`;
+    sc.onload = () => (window.KQ_VAL ? ok(window.KQ_VAL) : fail());
+    sc.onerror = () => fail();
+    document.head.appendChild(sc);
+  });
+}
+const median = (a) => { const b = a.filter((x) => x != null && isFinite(x)).sort((x, y) => x - y); if (!b.length) return null; const m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
+const mult = (v, d = 1) => v == null ? "–" : v.toFixed(d) + "배";
+function scatterChart(host, pts, opt = {}) {
+  host.innerHTML = "";
+  const W = host.clientWidth || 600, H = opt.height || 360, m = { l: 48, r: 16, t: 10, b: 30 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opt.aria || "" }, host);
+  if (!pts.length) { const t = el("text", { x: 8, y: 20 }, svg); t.textContent = "데이터 없음"; return; }
+  const lx = (v) => Math.log10(v);
+  const x0 = lx(opt.xmin), x1 = lx(opt.xmax), y0 = opt.ymin, y1 = opt.ymax;
+  const X = (v) => m.l + (lx(Math.min(opt.xmax, Math.max(opt.xmin, v))) - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = (v) => m.t + (y1 - Math.min(y1, Math.max(y0, v))) / (y1 - y0) * (H - m.t - m.b);
+  for (const v of opt.xticks) {
+    el("line", { x1: X(v), x2: X(v), y1: m.t, y2: H - m.b, stroke: css("--grid"), "stroke-width": 1 }, svg);
+    const t = el("text", { x: X(v), y: H - 10, "text-anchor": "middle" }, svg); t.textContent = v + "배";
+  }
+  for (const v of niceTicks(y0, y1, 6)) {
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? css("--axis") : css("--grid"), "stroke-width": 1 }, svg);
+    const t = el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg); t.textContent = v + "%";
+  }
+  const smax = Math.max(...pts.map((p) => p.size || 0)) || 1, col = css("--series-1");
+  const sorted = [...pts].sort((a, b) => (b.size || 0) - (a.size || 0));
+  for (const p of sorted) {
+    const r = 3 + 11 * Math.sqrt((p.size || 0) / smax);
+    const c = el("circle", { cx: X(p.x), cy: Y(p.y), r, fill: p.hl ? css("--warning") : col, "fill-opacity": 0.55, stroke: css("--surface-1"), "stroke-width": 1, style: "cursor:pointer" }, svg);
+    c.addEventListener("mousemove", (ev) => showTip(ev.clientX, ev.clientY, p.label, p.tip));
+    c.addEventListener("mouseleave", hideTip);
+    if (p.onclick) c.addEventListener("click", () => { hideTip(); p.onclick(); });
+    if (p.text) { const t = el("text", { x: X(p.x) + r + 2, y: Y(p.y) + 4, style: "fill: var(--text-secondary); font-size: 11px; pointer-events: none" }, svg); t.textContent = p.text; }
+  }
+}
+function renderValuation() {
+  if (!VAL) {
+    loadVal().then((x) => { VAL = x; if (TAB === "valuation") renderValuation(); })
+      .catch(() => { $("#val-sub").textContent = "valuation.js 를 불러오지 못했다. 대시보드를 새로 만든 뒤 outputs 폴더째로 열어야 한다 (재무 수집: scripts/collect_fin.py)."; });
+    return;
+  }
+  const C = VAL.cols, idx = Object.fromEntries(C.map((c, i) => [c, i]));
+  const all = VAL.rows.map((r) => Object.fromEntries(C.map((c, i) => [c, r[i]])));
+  const secs = [...new Set(all.map((r) => r.sector))].sort();
+  const sel = $("#val-sec");
+  if (!sel.options.length) {
+    sel.innerHTML = `<option value="">전체 업종</option>` + secs.map((x) => `<option>${esc(x)}</option>`).join("");
+    sel.addEventListener("change", () => { VAL_SEC = sel.value; VAL_LIMIT = 50; renderValuation(); });
+  }
+  const q = ($("#val-q").value || "").trim();
+  const base = all.filter((r) => (VAL_MKT === "전체" || r.market === VAL_MKT) && (r.mcap ?? 0) >= VAL_CAP);
+  const rows = base.filter((r) => (!VAL_SEC || r.sector === VAL_SEC) && (!q || r.name.includes(q) || r.code.startsWith(q)));
+  $("#val-sub").textContent = `${KDATE(VAL.asof)} 시가총액 · DART 최신 보고서 기준 · ${rows.length.toLocaleString("ko-KR")}종목 (적자 ${rows.filter((r) => r.loss).length})`;
+  // 산점도
+  const pts = rows.filter((r) => r.pbr > 0 && r.roe != null).sort((a, b) => (b.mcap ?? 0) - (a.mcap ?? 0)).slice(0, 400);
+  const labelTop = new Set(pts.slice(0, 8).map((r) => r.code));
+  scatterChart($("#ch-val"), pts.map((r) => ({ x: r.pbr, y: r.roe * 100, size: r.mcap, hl: WATCH.includes(r.code), label: `${r.name} · ${r.sector}`,
+    text: labelTop.has(r.code) ? r.name : "",
+    tip: [{ label: "PER", value: mult(r.per) }, { label: "PBR", value: mult(r.pbr, 2) }, { label: "ROE", value: fmtPct(r.roe) },
+          { label: "영업이익률", value: fmtPct(r.opm) }, { label: "시가총액", value: krw(r.mcap) }, { label: "기준", value: r.label }],
+    onclick: STOCK_SET.has(r.code) ? () => openStock(r.code) : null })),
+    { xmin: 0.1, xmax: 30, xticks: [0.2, 0.5, 1, 2, 5, 10, 20], ymin: -40, ymax: 80, height: 360, aria: "PBR-ROE 산점도" });
+  // 업종 중앙값
+  const by = new Map();
+  for (const r of base) { if (!by.has(r.sector)) by.set(r.sector, []); by.get(r.sector).push(r); }
+  const secRows = [...by.entries()].filter(([, a]) => a.length >= 3).map(([n, a]) => ({ n, k: a.length,
+    per: median(a.map((r) => r.per)), pbr: median(a.map((r) => r.pbr)), roe: median(a.map((r) => r.roe)), opm: median(a.map((r) => r.opm)) }))
+    .sort((a, b) => b.k - a.k);
+  $("#val-sec-table").innerHTML = `<thead><tr><th>업종</th><th class="num">종목</th><th class="num">PER</th><th class="num">PBR</th><th class="num">ROE</th><th class="num">영업이익률</th></tr></thead><tbody>` +
+    secRows.map((x) => `<tr${x.n === VAL_SEC ? ' style="background:var(--grid)"' : ""} data-sec="${esc(x.n)}" style="cursor:pointer"><td>${esc(x.n)}</td><td class="num">${x.k}</td><td class="num">${mult(x.per)}</td>
+      <td class="num">${mult(x.pbr, 2)}</td><td class="num">${fmtPct(x.roe)}</td><td class="num">${fmtPct(x.opm)}</td></tr>`).join("") + "</tbody>";
+  $("#val-sec-table").querySelectorAll("tr[data-sec]").forEach((tr) => tr.addEventListener("click", () => {
+    VAL_SEC = VAL_SEC === tr.dataset.sec ? "" : tr.dataset.sec; sel.value = VAL_SEC; VAL_LIMIT = 50; renderValuation();
+  }));
+  // 표
+  const cols = [["name", "종목"], ["sector", "업종"], ["mcap", "시가총액"], ["per", "PER"], ["pbr", "PBR"], ["roe", "ROE"], ["opm", "영업이익률"],
+    ["rev_yoy", "매출 YoY"], ["op_yoy", "영업이익 YoY"], ["debt", "부채비율"], ["label", "기준"]];
+  const key = (r) => { const v = r[VAL_SORT]; return v == null ? (VAL_DIR > 0 ? Infinity : -Infinity) : v; };
+  const sortedRows = [...rows].sort((a, b) => (typeof key(a) === "string" ? String(key(a)).localeCompare(String(key(b))) : key(a) - key(b)) * VAL_DIR);
+  const shown = sortedRows.slice(0, VAL_LIMIT);
+  const fmt = { mcap: (v) => krw(v), per: (v) => mult(v), pbr: (v) => mult(v, 2), roe: (v) => fmtPct(v), opm: (v) => fmtPct(v),
+    rev_yoy: (v) => fmtPct(v, 0), op_yoy: (v) => fmtPct(v, 0), debt: (v) => v == null ? "–" : (v * 100).toFixed(0) + "%" };
+  $("#val-table").innerHTML = `<thead><tr>${cols.map(([k, l]) => `<th class="${k === "name" || k === "sector" || k === "label" ? "" : "num "}sortable" data-k="${k}">${l}${VAL_SORT === k ? (VAL_DIR > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>` +
+    shown.map((r) => `<tr><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}${r.market === "코스닥" ? '<span class="badge">코스닥</span>' : ""}${r.loss ? '<span class="badge">적자</span>' : ""}</td>
+      <td class="muted">${esc(r.sector)}</td>${cols.slice(2, -1).map(([k]) => `<td class="num ${k.endsWith("yoy") || k === "roe" ? signCls(r[k]) : ""}">${fmt[k](r[k])}</td>`).join("")}<td class="muted">${r.label}</td></tr>`).join("") + "</tbody>";
+  $("#val-table").querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
+    const k = th.dataset.k; if (VAL_SORT === k) VAL_DIR = -VAL_DIR; else { VAL_SORT = k; VAL_DIR = ["per", "pbr", "debt"].includes(k) ? 1 : -1; } renderValuation();
+  }));
+  const more = $("#val-more");
+  more.hidden = rows.length <= VAL_LIMIT;
+  more.textContent = `더 보기 (${(rows.length - VAL_LIMIT).toLocaleString("ko-KR")}종목 남음)`;
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -1809,7 +1944,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "market"];
@@ -1828,7 +1963,7 @@ function showTab(name) {
   if (lab) { LAB_LAST = name; try { localStorage.setItem("kq-lab", name); } catch (e) {} }
   const mk = MKT.includes(name);
   if (mk) { MKT_LAST = name; try { localStorage.setItem("kq-mkt", name); } catch (e) {} }
-  const group = lab ? "lab" : mk ? "mkt" : name === "compare" ? "stock" : name === "etfd" ? "etf" : name;
+  const group = lab ? "lab" : mk ? "mkt" : (name === "compare" || name === "valuation") ? "stock" : name === "etfd" ? "etf" : name;
   document.querySelectorAll("nav.tabs button").forEach((b) => {
     const on = b.dataset.tab === group;
     b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1;
@@ -1855,6 +1990,10 @@ function seg(host, items, get, set) {
 seg($("#range"), [["1y", "1년"], ["3y", "3년"], ["5y", "5년"], ["all", "전체"]], () => RANGE, (v) => { RANGE = v; renderMarket(); renderRegime(); });
 seg($("#hsel"), [[5, "5일"], [20, "20일"]], () => H_SEL, (v) => { H_SEL = +v; renderResearch(); });
 $("#mon-q").addEventListener("input", renderMonitor);
+$("#val-q").addEventListener("input", () => { VAL_LIMIT = 50; renderValuation(); });
+$("#val-more").addEventListener("click", () => { VAL_LIMIT += 100; renderValuation(); });
+seg($("#val-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => VAL_MKT, (v) => { VAL_MKT = v; VAL_LIMIT = 50; renderValuation(); });
+seg($("#val-cap"), [[0, "시총 전체"], [1e11, "1천억+"], [1e12, "1조+"], [1e13, "10조+"]], () => VAL_CAP, (v) => { VAL_CAP = +v; VAL_LIMIT = 50; renderValuation(); });
 seg($("#hl-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => HL_MKT, (v) => { HL_MKT = v; renderHighLow(); });
 seg($("#hl-smooth"), [[1, "일별"], [5, "5일 평균"], [20, "20일 평균"]], () => HL_SMOOTH, (v) => { HL_SMOOTH = +v; renderHighLow(); });
 seg($("#fb-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => FB_MKT, (v) => { FB_MKT = v; renderFlowBoard(); });
