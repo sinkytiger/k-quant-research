@@ -309,6 +309,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <div class="card" id="watch-card">
       <div class="card-h"><div><h2>관심 종목</h2><div class="sub" id="watch-sub"></div></div>
         <a href="#compare" class="sub" style="color:var(--series-1);text-decoration:none">비교 차트로 보기 →</a></div>
+      <div class="note" style="margin:0 0 8px">소식 = 마지막 거래일 기준 ±5% 급등락 · 52주 신고가/신저가 · 외국인·기관 5일+ 연속 순매수(도) · 새 공시 · 7일 안 실적 발표 · 뉴스 3건+ (표시에 마우스를 올리면 내용)</div>
       <div class="watch" id="watch"></div>
     </div>
     <div class="card" id="map-card">
@@ -1289,13 +1290,40 @@ function renderWatch() {
   }
   $("#watch-sub").textContent = `${WATCH.length}종목 · 종가 기준 · 이 브라우저에만 저장`;
   host.innerHTML = WATCH.map((c) => `<a class="mcard" href="#stock:${c}" data-code="${c}"><div class="nm">${esc((STOCKS.find((s) => s.code === c) || {}).name || c)}</div><div class="v muted">…</div></a>`).join("");
+  let nEv = 0, done = 0;
   WATCH.forEach((c) => loadStock(c).then((S) => {
     const a = host.querySelector(`a[data-code="${c}"]`);
     if (!a) return;
     const k = S.candles, last = k.at(-1)[4], prev = k.at(-2) ? k.at(-2)[4] : last, ch = last - prev;
+    const ev = watchEvents(S);
+    nEv += ev.length;
     a.innerHTML = `<div class="nm">${esc(S.name)}</div><div class="v">${won(last)}</div>
-      <div class="d ${signCls(ch)}">${sgn(ch)}${won(Math.abs(ch))} (${fmtPct(prev ? ch / prev : 0, 2)})</div>${sparkline(k.slice(-60).map((x) => x[4]), 160, 30, ch >= 0, true)}`;
-  }).catch(() => {}));
+      <div class="d ${signCls(ch)}">${sgn(ch)}${won(Math.abs(ch))} (${fmtPct(prev ? ch / prev : 0, 2)})</div>${sparkline(k.slice(-60).map((x) => x[4]), 160, 30, ch >= 0, true)}
+      ${ev.length ? `<div class="tags" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${ev.slice(0, 4).map(([t, cls, tip]) => `<span class="tone ${cls}" title="${esc(tip || t)}">${esc(t)}</span>`).join("")}</div>` : ""}`;
+  }).catch(() => {}).finally(() => {
+    if (++done === WATCH.length) $("#watch-sub").textContent = `${WATCH.length}종목 · 소식 ${nEv}건 · 종가 기준 · 이 브라우저에만 저장`;
+  }));
+}
+/* 관심 종목 소식: 이미 받은 데이터로 마지막 거래일 기준 이벤트를 만든다 (새 수집 없음). [표시, 색 클래스, 설명] */
+function watchEvents(S) {
+  const ev = [], code = S.code, st = S.stats || {}, asof = S.asof;
+  const r = st.ret_1d;
+  if (r != null && Math.abs(r) >= 0.05) ev.push([`${r > 0 ? "급등" : "급락"} ${fmtPct(r, 1)}`, r > 0 ? "p" : "n", "마지막 거래일 등락률 ±5% 이상"]);
+  const HL = D.highlow || {};
+  if ((HL.hi || []).some((x) => x.code === code)) ev.push(["52주 신고가", "p", `${KDATE(HL.asof)} 고가가 직전 250거래일 최고치 이상`]);
+  if ((HL.lo || []).some((x) => x.code === code)) ev.push(["52주 신저가", "n", `${KDATE(HL.asof)} 저가가 직전 250거래일 최저치 이하`]);
+  const fr = ((D.flowboard || {}).rows || []).find((x) => x.code === code);
+  if (fr) for (const [kk, nm] of [["frgn", "외국인"], ["inst", "기관"]]) {
+    const n = fr.st[kk];
+    if (Math.abs(n) >= 5) ev.push([`${nm} ${Math.abs(n)}일 연속 ${n > 0 ? "순매수" : "순매도"}`, n > 0 ? "p" : "n", `${KDATE(D.flowboard.asof)}까지 KIS 확정치`]);
+  }
+  const dart = ((S.dart || {}).rows || []).filter((d) => d.date >= asof);
+  if (dart.length) ev.push([`공시 ${dart.length}건`, "", dart.map((d) => `${d.date} ${d.title}`).join(" / ")]);
+  const F = S.fin || {};
+  if (F.rcept && (new Date(asof) - new Date(F.rcept)) / 864e5 <= 7) ev.push([`실적 발표 ${F.label}`, "", `${F.rcept} 접수 · 영업이익 YoY ${fmtPct(F.op_yoy, 0)}`]);
+  const news = (S.news || []).filter((n) => !n.auto && n.dt.slice(0, 10) >= asof);
+  if (news.length >= 3) ev.push([`뉴스 ${news.length}건`, "", news.slice(0, 5).map((n) => n.title).join(" / ")]);
+  return ev;
 }
 function renderCompare() {
   if (!CMP.length) {
