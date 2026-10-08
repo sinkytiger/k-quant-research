@@ -842,6 +842,61 @@ def calendar_section(log, days: int = 45) -> list[dict]:
     return ev
 
 
+def short_credit_section(log, days: int = 250) -> dict:
+    """공매도·신용잔고 (유니버스): 종목별 최근 지표 + 유니버스 합산 일별 추이 (수급 탭)."""
+    from src.data import short_credit as sc
+
+    cur = sorted(membership.current_members())
+    names, sec = membership.load_names(), _sectors()
+    rows, amt, val, loan = [], {}, {}, {}
+    r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
+    for c in cur:
+        s_, c_ = sc.load("short", c), sc.load("credit", c)
+        if s_.empty and c_.empty:
+            continue
+        row = {"code": c, "name": names.get(c, c), "sector": sec.get(c, "기타")}
+        if len(s_):
+            p = s_["short_amt_pct"]
+            row.update(s5=r4(p.tail(5).mean()), s20=r4(p.tail(20).mean()), s60=r4(p.tail(60).mean()),
+                       s_date=f"{s_.index.max():%Y-%m-%d}")
+            v = (s_["short_amt"] * 100 / s_["short_amt_pct"]).where(s_["short_amt_pct"] > 0)
+            amt[c], val[c] = s_["short_amt"], v
+        if len(c_):
+            row.update(loan_rate=r4(c_["loan_rate"].iloc[-1]), loan_amt=r4(c_["loan_amt"].iloc[-1]),
+                       loan_chg20=r4(c_["loan_amt"].iloc[-1] / c_["loan_amt"].iloc[-21] - 1) if len(c_) > 21 and c_["loan_amt"].iloc[-21] > 0 else None,
+                       gvrt5=r4(c_["loan_gvrt"].tail(5).mean()), c_date=f"{c_.index.max():%Y-%m-%d}")
+            loan[c] = c_["loan_amt"]
+        px = prices.load(c)["Close"].dropna() if prices.price_path(c).exists() else pd.Series(dtype=float)
+        row["r20"] = r4(px.iloc[-1] / px.iloc[-21] - 1) if len(px) > 21 else None
+        rows.append(row)
+    A, V, L = pd.DataFrame(amt), pd.DataFrame(val), pd.DataFrame(loan)
+    agg_s = (A.sum(axis=1) / V.sum(axis=1) * 100).dropna().tail(days) if len(A) else pd.Series(dtype=float)
+    agg_l = (L.ffill().sum(axis=1) / 1e12).tail(days) if len(L) else pd.Series(dtype=float)
+    log.info("공매도·신용 %d종목 (공매도 ~%s, 신용 ~%s)", len(rows), f"{agg_s.index.max():%Y-%m-%d}" if len(agg_s) else "-",
+             f"{agg_l.index.max():%Y-%m-%d}" if len(agg_l) else "-")
+    return {"rows": rows, "short": series_points(agg_s), "loan": series_points(agg_l), "ban": ["2023-11-06", "2025-03-30"]}
+
+
+def sc_block(code: str, days: int = 250) -> dict:
+    """종목 상세: 공매도 거래대금 비중(%)·신용 잔고율(%) 1년 + 최신값 (유니버스 종목만)."""
+    from src.data import short_credit as sc
+
+    s_, c_ = sc.load("short", code), sc.load("credit", code)
+    if s_.empty and c_.empty:
+        return {}
+    r = lambda x: None if x != x else round(float(x), 3)  # noqa: E731
+    out = {}
+    if len(s_):
+        t = s_.tail(days)
+        out["short"] = {"d": [f"{x:%y%m%d}" for x in t.index], "pct": [r(x) for x in t["short_amt_pct"]],
+                        "amt": r(t["short_amt"].iloc[-1]), "s5": r(t["short_amt_pct"].tail(5).mean()), "s60": r(t["short_amt_pct"].tail(60).mean())}
+    if len(c_):
+        t = c_.tail(days)
+        out["credit"] = {"d": [f"{x:%y%m%d}" for x in t.index], "rate": [r(x) for x in t["loan_rate"]],
+                         "amt": r(t["loan_amt"].iloc[-1]), "gvrt": r(t["loan_gvrt"].iloc[-1]), "date": f"{t.index.max():%Y-%m-%d}"}
+    return out
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -874,7 +929,7 @@ def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
                        "asof": f"{asof:%Y-%m-%d}", "mcap": info["mcap"], "stats": st, "candles": sd.ohlcv(px),
                        "flows": sd.flow_block(flows.load(c)), "news": sd.news_block(news.load(c)),
                        "dart": sd.dart_block(by_code.get(c, pd.DataFrame())), "div": div, "fin": fin_block(c),
-                       "band": band_block(c)}
+                       "band": band_block(c), "sc": sc_block(c) if c in cur else {}}
         index.append({"code": c, "name": info["name"], "market": info["market"], "universe": c in cur,
                       "mcap": info["mcap"]})
     n = sd.write_all(config.OUTPUTS / "stocks", clean(payloads))
@@ -1038,7 +1093,7 @@ def monitor(log) -> dict:
 
 
 # 첫 화면(홈)에 필요 없는 큰 데이터 — 그 탭을 처음 열 때 data/<키>.js 를 불러온다
-LAZY = ("etf", "regime", "research", "market", "mval", "monitor", "mrank", "hcandles")
+LAZY = ("etf", "regime", "research", "market", "mval", "monitor", "mrank", "hcandles", "shortcredit")
 
 
 def write_lazy(data: dict, keys) -> list[str]:
@@ -1064,6 +1119,7 @@ def main(argv=None) -> int:
     data["filings"] = filings_section(log)
     data["notes"] = notes_section(log)
     data["flowboard"] = flows_board_section(log)
+    data["shortcredit"] = short_credit_section(log)
     data["highlow"] = highlow_section(log)
     data["rotation"] = rotation_section(log)
     data["mrank"] = mcap_rank_section(log)

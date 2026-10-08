@@ -311,7 +311,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
     <div class="card" id="watch-card">
       <div class="card-h"><div><h2>관심 종목</h2><div class="sub" id="watch-sub"></div></div>
         <a href="#compare" class="sub" style="color:var(--series-1);text-decoration:none">비교 차트로 보기 →</a></div>
-      <div class="note" style="margin:0 0 8px">소식 = 마지막 거래일 기준 ±5% 급등락 · 52주 신고가/신저가 · 외국인·기관 5일+ 연속 순매수(도) · 새 공시 · 7일 안 실적 발표 · 뉴스 3건+ (표시에 마우스를 올리면 내용)</div>
+      <div class="note" style="margin:0 0 8px">소식 = 마지막 거래일 기준 ±5% 급등락 · 52주 신고가/신저가 · 외국인·기관 5일+ 연속 순매수(도) · 공매도 급증(5일 비중 5%+ 이고 60일의 2배+) · 새 공시 · 7일 안 실적 발표 · 뉴스 3건+ (표시에 마우스를 올리면 내용)</div>
       <div class="watch" id="watch"></div>
     </div>
     <div class="card" id="map-card">
@@ -436,6 +436,16 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
         <div class="card"><div class="sub" id="fb-sec-sub"></div><div class="chart" id="ch-fb-sec"></div></div>
       </div>
     </div>
+    <h2 style="margin-top: 28px">공매도 · 신용잔고</h2>
+    <div class="sub" id="sc-sub"></div>
+    <div class="grid2">
+      <div class="card"><div class="sub">공매도 거래 비중 (유니버스 합, 거래대금 대비 %, 5일 평균)</div><div class="chart" id="ch-sc-short"></div></div>
+      <div class="card"><div class="sub">신용융자 잔고 (유니버스 합, 조원)</div><div class="chart" id="ch-sc-loan"></div></div>
+    </div>
+    <div class="ctl-row"><div class="rank-tabs row" id="sc-list" role="group" aria-label="목록"></div></div>
+    <div class="card scroll"><table id="sc-table"></table>
+      <div class="note">KIS 공매도 일별추이·신용잔고 일별추이. 공매도 비중 = 그날 거래대금 중 공매도 몫(%). 공매도 잔고는 이 API 에 없다.
+        2023-11-06 ~ 2025-03-30 은 공매도 전면 금지 기간이라 0. 신용 잔고율 = 융자 잔고 주수 ÷ 상장주식(%), 신용 공시는 결제일 기준이라 매매일보다 2거래일가량 늦다.</div></div>
     <div class="note">KIS 투자자별 매매(확정치). 종목 표·업종은 유니버스(코스피 시총 상위 200)만, 위 차트·타일은 시장 전체.
       시총 대비 = 기간 순매수 ÷ 시가총액. 쌍끌이 = 외국인과 기관이 같은 기간에 함께 순매수(또는 순매도). 연구 탭 IC 에서 수급 피처는 약한 신호였고
       단독 롱온리 전략은 게이트를 넘지 못했다. 매매 권유가 아니다.</div>
@@ -1270,6 +1280,10 @@ function drawStock(S) {
           : `<div class="note">${S.market === "코스피" ? "최근 6개월 공시 없음" + (insider ? ` (임원·주요주주 소유 보고 ${insider}건 제외)` : "") : "공시 목록은 유가증권(코스피)만 받는다"}</div>`}
       </div>
     </div>
+    ${S.sc && (S.sc.short || S.sc.credit) ? `<div class="card"><div class="sub" id="stk-sc-sub"></div><div class="grid2" style="gap:16px">
+      <div><div class="sub" style="font-size:12px">공매도 거래 비중 (%, 5일 평균)</div><div class="chart" id="ch-stk-short"></div></div>
+      <div><div class="sub" style="font-size:12px">신용 잔고율 (상장주식 대비 %)</div><div class="chart" id="ch-stk-credit"></div></div></div>
+      <div class="note">2023-11-06 ~ 2025-03-30 은 공매도 금지 기간. 신용은 결제일 기준 공시라 매매일보다 2거래일가량 늦다.</div></div>` : ""}
     ${S.band && S.band.d ? `<div class="card"><div class="card-h"><div class="sub" id="band-sub"></div><div class="rank-tabs row" id="band-mode" role="group" aria-label="밴드 종류"></div></div>
       <div class="legend" id="lg-band"></div><div class="chart" id="ch-band"></div>
       <div class="note">점선 = 그 배수였다면의 주가 (배수 × 그때 알던 주당순이익·주당순자산), 주가 최고치의 1.8배 위는 자름. 실적은 보고서 접수 다음 거래일부터 반영(시점 맞춤), 수정주가 기준, 주 단위.
@@ -1288,6 +1302,16 @@ function drawStock(S) {
     })()}
     <div class="note">표시용 정보이며 매매 권유가 아니다.</div>`;
   if (S.band && S.band.d) drawBand(S);
+  if (S.sc && (S.sc.short || S.sc.credit)) {
+    const iso = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`, sh = S.sc.short, cr = S.sc.credit;
+    $("#stk-sc-sub").textContent = `공매도 · 신용 · ` + [sh ? `공매도 비중 5일 ${sh.s5 == null ? "–" : sh.s5.toFixed(2) + "%"} (60일 ${sh.s60 == null ? "–" : sh.s60.toFixed(2) + "%"})` : "",
+      cr ? `신용 잔고 ${krw(cr.amt)} · 잔고율 ${cr.rate.at(-1)}% · 공여율 ${cr.gvrt}% (${KDATE(cr.date)})` : ""].filter(Boolean).join(" · ");
+    if (sh) { const pts = sh.d.map((d, i) => [iso(d), sh.pct[i]]).filter((p) => p[1] != null);
+      const m5 = pts.map((p, i) => [p[0], pts.slice(Math.max(0, i - 4), i + 1).reduce((a, q) => a + q[1], 0) / Math.min(5, i + 1)]);
+      lineChart($("#ch-stk-short"), [{ name: "공매도 비중", color: css("--series-1"), points: m5 }], { height: 160, yfmt: (v) => v.toFixed(1) + "%", aria: "공매도 비중" }); }
+    if (cr) lineChart($("#ch-stk-credit"), [{ name: "신용 잔고율", color: css("--series-2"), points: cr.d.map((d, i) => [iso(d), cr.rate[i]]).filter((p) => p[1] != null) }],
+      { height: 160, yfmt: (v) => v.toFixed(2) + "%", aria: "신용 잔고율" });
+  }
   seg($("#stk-range"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => STK_RANGE, (v) => { STK_RANGE = +v; candleChart($("#ch-stk"), S.candles.slice(-STK_RANGE)); });
   candleChart($("#ch-stk"), S.candles.slice(-STK_RANGE));
   if (f.dates) {
@@ -1406,6 +1430,8 @@ function watchEvents(S) {
     const n = fr.st[kk];
     if (Math.abs(n) >= 5) ev.push([`${nm} ${Math.abs(n)}일 연속 ${n > 0 ? "순매수" : "순매도"}`, n > 0 ? "p" : "n", `${KDATE(D.flowboard.asof)}까지 KIS 확정치`]);
   }
+  const sh = (S.sc || {}).short;
+  if (sh && sh.s5 != null && sh.s60 > 0 && sh.s5 >= 5 && sh.s5 >= 2 * sh.s60) ev.push([`공매도 급증 ${sh.s5.toFixed(1)}%`, "n", `최근 5일 공매도 거래 비중 ${sh.s5.toFixed(2)}% (60일 평균 ${sh.s60.toFixed(2)}%)`]);
   const dart = ((S.dart || {}).rows || []).filter((d) => d.date >= asof);
   if (dart.length) ev.push([`공시 ${dart.length}건`, "", dart.map((d) => `${d.date} ${d.title}`).join(" / ")]);
   const F = S.fin || {};
@@ -2043,6 +2069,27 @@ function renderCalendar() {
       <span class="tt">${e.code ? `<a href="#stock:${e.code}">${esc(e.title)}</a>` : esc(e.title)}</span>${e.note ? `<span class="muted" style="font-size:12px">${esc(e.note)}</span>` : ""}</li>`;
   }).join("") : `<li class="muted">앞으로 45일 안에 등록된 일정이 없다</li>`;
 }
+/* ---------- 공매도·신용 (수급 탭) ---------- */
+let SC_LIST = "short";
+function renderShortCredit() {
+  const X = D.shortcredit;
+  if (!X || !X.rows) { $("#sc-sub").textContent = "데이터 없음"; return; }
+  const last = (a) => (a && a.length ? a.at(-1)[0] : "–");
+  $("#sc-sub").textContent = `유니버스 ${X.rows.length}종목 · 공매도 ${KDATE(last(X.short))}까지 · 신용 ${KDATE(last(X.loan))}까지 (매매일 기준)`;
+  const ma = (pts, n) => pts.map((p, i) => [p[0], pts.slice(Math.max(0, i - n + 1), i + 1).reduce((a, q) => a + q[1], 0) / Math.min(n, i + 1)]);
+  lineChart($("#ch-sc-short"), [{ name: "공매도 비중", color: css("--series-1"), points: ma(X.short, 5) }],
+    { height: 180, yfmt: (v) => v.toFixed(1) + "%", aria: "공매도 거래 비중" });
+  lineChart($("#ch-sc-loan"), [{ name: "신용융자 잔고", color: css("--series-2"), points: X.loan }],
+    { height: 180, yfmt: (v) => v.toFixed(1) + "조", aria: "신용융자 잔고" });
+  let R = [...X.rows];
+  const key = { short: (r) => r.s5, surge: (r) => (r.s60 > 0.5 ? r.s5 / r.s60 : null), rate: (r) => r.loan_rate, chg: (r) => r.loan_chg20 }[SC_LIST];
+  R = R.filter((r) => key(r) != null).sort((a, b) => key(b) - key(a)).slice(0, 20);
+  const pc = (v, d = 2) => v == null ? "–" : v.toFixed(d) + "%";
+  $("#sc-table").innerHTML = `<thead><tr><th class="rk">순위</th><th>종목</th><th>업종</th><th class="num">공매도 5일</th><th class="num">공매도 60일</th><th class="num">신용 잔고율</th><th class="num">신용 잔고</th><th class="num">잔고 20일 변화</th><th class="num">20일 수익률</th></tr></thead><tbody>` +
+    R.map((r, i) => `<tr><td class="rk">${i + 1}</td><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}</td><td class="muted">${esc(r.sector)}</td>
+      <td class="num">${pc(r.s5)}</td><td class="num muted">${pc(r.s60)}</td><td class="num">${pc(r.loan_rate)}</td><td class="num">${krw(r.loan_amt)}</td>
+      <td class="num ${signCls(r.loan_chg20)}">${fmtPct(r.loan_chg20, 1)}</td><td class="num ${signCls(r.r20)}">${fmtPct(r.r20, 1)}</td></tr>`).join("") + "</tbody>";
+}
 function renderQuality() {
   const Q = D.quality;
   if (!Q) { $("#quality-sub").textContent = "점검 결과 없음"; return; }
@@ -2306,7 +2353,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { earnings: () => renderEarnings(), mrank: () => renderMrank(), screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(), flows: () => renderFlowBoard(), notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { flows: () => { renderFlowBoard(); renderShortCredit(); }, earnings: () => renderEarnings(), mrank: () => renderMrank(), screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(),  notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "earnings", "mrank", "market"];
@@ -2314,7 +2361,7 @@ let LAB_LAST = "research", MKT_LAST = "flows";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
 try { const v = localStorage.getItem("kq-mkt"); if (MKT.includes(v)) MKT_LAST = v; } catch (e) {}
 /* 탭을 열 때 필요한 데이터 (첫 화면을 가볍게: 나머지는 outputs/data/<키>.js) */
-const NEED = { overview: ["market"], market: ["market", "regime", "mval"], compare: ["market"], filings: ["research"], research: ["research"],
+const NEED = { flows: ["shortcredit"], overview: ["market"], market: ["market", "regime", "mval"], compare: ["market"], filings: ["research"], research: ["research"],
   monitor: ["monitor"], mrank: ["mrank"], etf: ["etf"], etfd: ["etf"] };
 function ensureData(keys) {
   const lazy = new Set(D.lazy || []);
@@ -2385,6 +2432,7 @@ seg($("#val-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스�
 seg($("#val-cap"), [[0, "시총 전체"], [1e11, "1천억+"], [1e12, "1조+"], [1e13, "10조+"]], () => VAL_CAP, (v) => { VAL_CAP = +v; VAL_LIMIT = 50; renderValuation(); });
 seg($("#hl-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => HL_MKT, (v) => { HL_MKT = v; renderHighLow(); });
 seg($("#hl-smooth"), [[1, "일별"], [5, "5일 평균"], [20, "20일 평균"]], () => HL_SMOOTH, (v) => { HL_SMOOTH = +v; renderHighLow(); });
+seg($("#sc-list"), [["short", "공매도 비중 높은 순"], ["surge", "공매도 급증 (5일 ÷ 60일)"], ["rate", "신용 잔고율 높은 순"], ["chg", "신용 잔고 20일 증가 순"]], () => SC_LIST, (v) => { SC_LIST = v; renderShortCredit(); });
 seg($("#fb-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => FB_MKT, (v) => { FB_MKT = v; renderFlowBoard(); });
 seg($("#fb-per"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => FB_PER, (v) => { FB_PER = +v; renderFlowBoard(); });
 seg($("#fb-inv"), FB_INVS, () => FB_INV, (v) => { FB_INV = v; renderFlowBoard(); });
