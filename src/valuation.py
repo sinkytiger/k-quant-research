@@ -65,7 +65,8 @@ def metrics(q: pd.DataFrame, mcap: dict[str, float]) -> pd.DataFrame:
         eq = g["equity"].get(P)
         eq_prev = g["equity"].get(P - 4)
         cap = mcap.get(code)
-        if cap and ((ni is not None and abs(ni) > 5 * cap) or (eq == eq and eq is not None and eq > 50 * cap)):
+        suspect = bool(cap and ((ni is not None and abs(ni) > 5 * cap) or (eq == eq and eq is not None and eq > 50 * cap)))
+        if suspect:
             ni = op = rev = eq = eq_prev = None  # 데이터 오류로 보이는 값 (예: 단위가 어긋난 공시) — 지표를 만들지 않는다
         avg_eq = np.nanmean([x for x in (eq, eq_prev) if x is not None and x == x]) if (eq == eq and eq is not None) else None
 
@@ -85,7 +86,7 @@ def metrics(q: pd.DataFrame, mcap: dict[str, float]) -> pd.DataFrame:
             "rev_yoy": yoy("revenue"), "op_yoy": yoy("op"),
             "ni_ttm_chg": (ni / ni_prev - 1) if ni is not None and ni_prev and ni_prev > 0 else None,
             "op_ttm_chg": (op / op_prev - 1) if op is not None and op_prev and op_prev > 0 else None,
-            "loss": ni is not None and ni <= 0,
+            "loss": ni is not None and ni <= 0, "suspect": suspect,
         })
     return pd.DataFrame(rows).set_index("code") if rows else pd.DataFrame()
 

@@ -58,3 +58,12 @@ def test_parse_corpcode_alphanumeric_codes_do_not_shift():
     df = f.parse_corpcode(xml).set_index("stock_code")
     assert df.loc["001040", "corp_code"] == "00148540" and df.loc["0041L0", "corp_code"] == "01906598"
     assert len(df) == 2
+
+
+def test_suspect_unit_error_flagged_and_metrics_dropped():
+    q = v.quarterly(v.wide(_fin()))
+    ok = v.metrics(q, {"000001": 100.0})
+    assert not ok.loc["000001", "suspect"] and pd.notna(ok.loc["000001", "per"])
+    bad = v.metrics(q, {"000001": 1.0})  # TTM 순이익 21 > 시총 1 × 5 → 단위 오류로 본다
+    assert bad.loc["000001", "suspect"]
+    assert pd.isna(bad.loc["000001", "per"])

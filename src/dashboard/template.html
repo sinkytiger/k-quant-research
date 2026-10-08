@@ -578,7 +578,7 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
   <section id="s-overview" role="tabpanel" data-tab="overview">
     <div class="tiles" id="tiles"></div>
     <h2 style="margin-top:24px">데이터 상태</h2>
-    <div class="sub">공식 API(KRX Open API, KIS)로 매일 08:40 자동 수집. 영업일 기준 지연을 본다.</div>
+    <div class="sub">공식 API(KRX Open API, KIS, DART)로 매일 08:40 자동 수집(재무·백업은 토요일, 배당은 월 1회). 항목마다 정상 지연 기준이 다르다. 휴장일은 KIS 달력으로 뺀다.</div>
     <div class="card scroll"><table id="status-table"></table><div class="note" id="status-note"></div></div>
     <h2 style="margin-top: 24px">데이터 품질 점검</h2>
     <div class="sub" id="quality-sub"></div>
@@ -2107,16 +2107,19 @@ function renderQuality() {
 }
 function renderStatus() {
   const st = D.status;
+  const old = (r) => r.lag_bdays == null ? ["critical", "없음"] : r.lag_bdays <= 1 ? ["good", "정상"] : [r.lag_bdays <= 3 ? "warning" : "serious", `${r.lag_bdays}영업일 지연`];
   table($("#status-table"), [
+    { key: "group", label: "출처", fmt: (v) => v || "" },
     { key: "name", label: "데이터" },
     { key: "last", label: "마지막", num: true },
-    { key: "count", label: "건수", num: true, fmt: (v) => v?.toLocaleString("ko-KR") },
+    { key: "count", label: "건수", num: true, fmt: (v) => v?.toLocaleString("ko-KR") ?? "" },
     { key: "first", label: "시작", num: true, fmt: (v) => v || "" },
-    { key: "lag_bdays", label: "상태", html: (r) => r.lag_bdays == null ? status("critical", "없음")
-        : r.lag_bdays <= 1 ? status("good", "정상") : r.lag_bdays <= 3 ? status("warning", `${r.lag_bdays}영업일 지연`) : status("serious", `${r.lag_bdays}영업일 지연`) },
+    { key: "state", label: "상태", html: (r) => { const [k, l] = r.state ? [r.state, r.label] : old(r); return status(k, l); } },
+    { key: "note", label: "", html: (r) => `<span class="muted" style="font-size:12px;white-space:normal">${esc(r.note || "")}</span>` },
   ], st.rows);
+  const bad = st.rows.filter((r) => r.state && r.state !== "good");
   const steps = Object.entries(st.last_run?.steps || {}).map(([k, v]) => `${k} ${v === 0 ? "✓" : "✕(" + v + ")"}`).join(" · ");
-  $("#status-note").innerHTML = `생존편향 안전: ${st.survivorship_safe ? status("good", "예") : status("critical", "아니오")} ·
+  $("#status-note").innerHTML = (bad.length ? `<b>${status("warning", `점검 필요 ${bad.length}건`)}</b> ${esc(bad.map((r) => r.name).join(", "))} · ` : `${status("good", `${st.rows.length}개 항목 모두 정상`)} · `) + `생존편향 안전: ${st.survivorship_safe ? status("good", "예") : status("critical", "아니오")} ·
     유니버스 스냅샷 ${st.universe_snapshots}개(누적 ${st.universe_members_ever}종목) · 확인된 휴장일 ${st.holidays}일 ·
     오늘 KRX 호출 ${st.krx_calls_today}건 · 마지막 배치 ${esc(st.last_run?.file || "–")} ${esc(steps)}`;
 }

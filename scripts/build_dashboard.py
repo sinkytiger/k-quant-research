@@ -13,6 +13,7 @@ import logging
 import math
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import _boot  # noqa: F401
 import numpy as np
@@ -50,33 +51,120 @@ def _lagger():
     return lambda last: None if last is None else int(mx.trading_lag(last, today, cal, hol))
 
 
+def _state(lag, ok: int, warn: int, unit: str = "영업일") -> tuple[str, str]:
+    """지연 → (상태, 표시). ok 이하 정상, warn 이하 경고, 그 위 심각, 없음은 치명."""
+    if lag is None:
+        return "critical", "없음"
+    if lag <= ok:
+        return "good", "정상"
+    return ("warning" if lag <= warn else "serious"), f"{lag}{unit} 지연"
+
+
 def data_status() -> dict:
+    """데이터 상태 표: 항목마다 정상 지연 기준이 다르다 (예: 신용잔고는 결제일 공시라 3영업일, 백업은 8일)."""
+    import os
+
+    from src.data import dart, market_extra as mx, news, short_credit as sc
+    from src.data import dart_fin
+
     lag = _lagger()
+    today = pd.Timestamp.today().normalize()
     rows = []
-    for ds, label in (("stk", "유가증권 일별매매"), ("ksq", "코스닥 일별매매"),
-                      ("idx_kospi", "KOSPI 지수"), ("etf", "ETF(KODEX200)")):
+
+    def add(group, name, last, count=None, first=None, ok=1, warn=3, unit="영업일", days=None, note=""):
+        last = pd.Timestamp(last) if last is not None else None
+        v = days if days is not None else (lag(last) if last is not None else None)
+        st, label = _state(v, ok, warn, unit)
+        rows.append({"group": group, "name": name, "last": f"{last:%Y-%m-%d}" if last is not None else None,
+                     "count": count, "first": f"{pd.Timestamp(first):%Y-%m-%d}" if first is not None else None,
+                     "lag_bdays": v, "state": st, "label": label, "note": note})
+
+    for ds, label in (("stk", "유가증권 일별매매"), ("ksq", "코스닥 일별매매"), ("idx_kospi", "코스피 지수"),
+                      ("idx_kosdaq", "코스닥 지수"), ("etf", "ETF 일별매매")):
         days = krx_daily.saved_days(ds)
-        last = days[-1] if days else None
-        rows.append({"name": f"KRX {label}", "count": len(days),
-                     "first": f"{days[0]:%Y-%m-%d}" if days else None,
-                     "last": f"{last:%Y-%m-%d}" if last is not None else None,
-                     "lag_bdays": lag(last)})
+        add("KRX", label, days[-1] if days else None, len(days), days[0] if days else None)
     caps = marketcap.saved_days()
-    rows.append({"name": "시가총액 스냅샷", "count": len(caps), "first": f"{caps[0]:%Y-%m-%d}" if caps else None,
-                 "last": f"{caps[-1]:%Y-%m-%d}" if caps else None,
-                 "lag_bdays": lag(caps[-1]) if caps else None})
+    add("KRX", "시가총액 스냅샷", caps[-1] if caps else None, len(caps), caps[0] if caps else None)
+
     m = membership.load_membership()
     members = membership.all_members(m)
-    fl = [flows.load(c) for c in membership.current_members(m)]
-    flast = max((f.index.max() for f in fl if len(f)), default=None)
-    rows.append({"name": "KIS 수급 (현재 유니버스)", "count": sum(1 for f in fl if len(f)),
-                 "first": None, "last": f"{flast:%Y-%m-%d}" if flast is not None else None,
-                 "lag_bdays": lag(flast)})
-    have = {p.stem for p in config.PRICES_DIR.glob("*.csv")} if config.PRICES_DIR.exists() else set()
+    cur = membership.current_members(m)
+    lasts = lambda xs: max((x for x in xs if x is not None), default=None)  # noqa: E731
+    fl = [flows.load(c) for c in cur]
+    add("KIS", "수급 (유니버스)", lasts(f.index.max() for f in fl if len(f)), sum(1 for f in fl if len(f)))
+    for kind, label, ok, warn, note in (("short", "공매도 (유니버스)", 1, 3, ""),
+                                         ("credit", "신용잔고 (유니버스)", 3, 5, "결제일 기준 공시라 매매일보다 2거래일가량 늦다")):
+        ds_ = [sc.load(kind, c) for c in cur if sc.path(kind, c).exists()]
+        add("KIS", label, lasts(d.index.max() for d in ds_ if len(d)), len(ds_), ok=ok, warn=warn, note=note)
+    nl = []
+    for c in cur:
+        d = news.load(c)
+        if len(d):
+            nl.append(d["dt"].max().normalize())
+    add("KIS", "뉴스 제목 (유니버스)", lasts(nl), len(nl))
+    inv = mx.load_investor("KOSPI")
+    add("KIS", "시장별 투자자", inv.index.max() if len(inv) else None, len(inv))
+    g = mx.load_global("SPX")
+    add("KIS", "해외 지수·환율", g.index.max() if len(g) else None, len(g), ok=2, warn=4, note="미국 장은 한국 시간 다음 날 아침에 끝난다")
+    cal = mx.load_calendar()
+    cov = (cal.index.max() - today).days if len(cal) else None
+    rows.append({"group": "KIS", "name": "휴장 달력", "last": f"{cal.index.max():%Y-%m-%d}" if len(cal) else None, "count": len(cal),
+                 "first": None, "lag_bdays": None, "state": "good" if cov is not None and cov >= 7 else "warning",
+                 "label": f"{cov}일 앞까지" if cov is not None else "없음", "note": "앞으로 7일 이상 있어야 정상"})
+
+    dl = dart.load_all(start=today - pd.Timedelta(days=40))
+    add("DART", "공시 목록", dl["rcept_dt"].max() if len(dl) else None, len(dl), ok=1, warn=3)
+    fin = dart_fin.load_all()
+    if len(fin):
+        per = int((fin["year"] * 4 + fin["q"]).max())
+        n_latest = fin[(fin["year"] * 4 + fin["q"]) == per]["stock_code"].nunique()
+        # 기대 분기 = 분기 말 + 45일(사업보고서는 90일) 이 지난 가장 최근 분기
+        exp = None
+        for y in (today.year, today.year - 1):
+            for q in (4, 3, 2, 1):
+                end = pd.Timestamp(year=y, month=3 * q, day=1) + pd.offsets.MonthEnd(0)
+                if end + pd.Timedelta(days=90 if q == 4 else 46) <= today:
+                    exp = y * 4 + q if exp is None else max(exp, y * 4 + q)
+        lab = lambda P: f"{(P - 1) // 4}.{(P - 1) % 4 + 1}Q"  # noqa: E731
+        ok_ = exp is None or per >= exp
+        rows.append({"group": "DART", "name": "재무 주요계정", "last": f"{fin['rcept_dt'].max():%Y-%m-%d}", "count": n_latest,
+                     "first": lab(int((fin["year"] * 4 + fin["q"]).min())), "lag_bdays": None,
+                     "state": "good" if ok_ else "warning", "label": f"{lab(per)} 까지" + ("" if ok_ else f" ({lab(exp)} 미반영)"),
+                     "note": "매주 토요일 갱신. 건수 = 최신 분기 보고 회사 수"})
+    else:
+        add("DART", "재무 주요계정", None)
+
+    from src.data import dividends
+    mt = [dividends.div_path(c).stat().st_mtime for c in cur if dividends.div_path(c).exists()]
+    last_div = pd.Timestamp.fromtimestamp(max(mt)).normalize() if mt else None
+    add("기타", "배당 일정 (월 1회)", last_div, len(mt), days=(today - last_div).days if last_div is not None else None,
+        ok=35, warn=45, unit="일")
+    nav = sorted((config.OUTPUTS / "paper").glob("nav_*.csv"))
+    nav_last = max((pd.read_csv(f, index_col=0, parse_dates=True).index.max() for f in nav), default=None) if nav else None
+    add("기타", "페이퍼 NAV", nav_last, len(nav))
+    notes = sorted((config.ROOT / "notes").rglob("*.pdf")) if (config.ROOT / "notes").exists() else []
+    rows.append({"group": "기타", "name": "분석 노트", "last": max((f"{pd.Timestamp.fromtimestamp(f.stat().st_mtime):%Y-%m-%d}" for f in notes), default=None),
+                 "count": len(notes), "first": None, "lag_bdays": None, "state": "good", "label": "정상", "note": "notes/ 의 PDF 수"})
+    dests = [Path(x.strip()) for x in (os.environ.get("KQ_BACKUP_DIR") or str(Path(os.environ.get("OneDrive", str(Path.home()))) / "KQuantBackup")).split(";") if x.strip()]
+    for d in dests:
+        zips = sorted(d.glob("kquant-data-*.zip")) if d.exists() else []
+        last_z = pd.Timestamp.fromtimestamp(zips[-1].stat().st_mtime).normalize() if zips else None
+        add("기타", f"데이터 백업 ({d.drive or d.anchor}{'구글' if 'G:' in str(d) else 'OneDrive' if 'OneDrive' in str(d) else ''})",
+            last_z, len(zips), days=(today - last_z).days if last_z is not None else None, ok=8, warn=15, unit="일",
+            note="매주 토요일 자동 백업")
+
+    run = last_run_status()
+    if run:
+        fails = [k for k, v in run["steps"].items() if v != 0]
+        rows.append({"group": "기타", "name": "일일 배치 (마지막 실행)", "last": f"{run['file'][6:10]}-{run['file'][10:12]}-{run['file'][12:14]}",
+                     "count": len(run["steps"]), "first": None, "lag_bdays": None, "state": "warning" if fails else "good",
+                     "label": f"실패 {', '.join(fails)}" if fails else "정상",
+                     "note": "실패한 단계는 다음 날 배치나 수동 실행으로 다시 돈다" if fails else ""})
+
+    have = {p_.stem for p_ in config.PRICES_DIR.glob("*.csv")} if config.PRICES_DIR.exists() else set()
     safe = bool(m) and all(c in have for c in members)
     return {"rows": rows, "universe_snapshots": len(m), "universe_members_ever": len(members),
-            "universe_current": len(membership.current_members(m)),
-            "universe_last": f"{max(m):%Y-%m-%d}" if m else None,
+            "universe_current": len(cur), "universe_last": f"{max(m):%Y-%m-%d}" if m else None,
             "survivorship_safe": safe, "holidays": len(krx_daily.load_holidays()),
             "krx_calls_today": krx_api.used_today(), "last_run": last_run_status()}
 
@@ -897,6 +985,42 @@ def sc_block(code: str, days: int = 250) -> dict:
     return out
 
 
+def extra_quality(log, data: dict) -> None:
+    """빌드 끝에 붙이는 품질 점검: 재무 이상값, 공매도·신용 끊김, 신용 잔고율 이상, 상세를 건너뛴 신규 ETF."""
+    from src import quality as q
+    from src.data import short_credit as sc
+
+    names = membership.load_names()
+    issues = []
+    _, mt = _valuation()
+    bad = mt[mt["suspect"]] if len(mt) and "suspect" in mt else pd.DataFrame()
+    issues.append(q.Issue("재무 이상값 (단위 오류 의심)", "info" if len(bad) else "ok",
+                          f"{len(bad)}개 — 지표에서 뺐다" if len(bad) else "없음",
+                          [f"{names.get(c, c)} ({c})" for c in bad.index][:30]))
+    cal = krx_daily.saved_days("stk")
+    cur = sorted(membership.current_members())
+    for kind, label, gap in (("short", "공매도 끊김 (유니버스, 3거래일 초과)", 3), ("credit", "신용잔고 끊김 (유니버스, 6거래일 초과)", 6)):
+        cut = cal[-(gap + 1)] if len(cal) > gap else cal[0]
+        stale = [c for c in cur if not sc.path(kind, c).exists() or sc.load(kind, c).index.max() < cut]
+        issues.append(q.Issue(label, "warning" if stale else "ok", f"{len(stale)}종목" if stale else "없음",
+                              [f"{names.get(c, c)} ({c})" for c in stale][:30]))
+    hi = []
+    for c in cur:
+        d = sc.load("credit", c)
+        if len(d) and d["loan_rate"].iloc[-1] > 20:
+            hi.append(f"{names.get(c, c)} ({c}) {d['loan_rate'].iloc[-1]:.1f}%")
+    issues.append(q.Issue("신용 잔고율 20% 초과 (값 확인)", "warning" if hi else "ok", f"{len(hi)}종목" if hi else "없음", hi[:30]))
+    etf_rows = (data.get("etf") or {}).get("rows", [])
+    have = {f.stem for f in (config.OUTPUTS / "etfs").glob("*.js")}
+    miss = [f"{r['name']} ({r['code']})" for r in etf_rows if r["code"] not in have]
+    issues.append(q.Issue("ETF 상세 없음 (상장 3거래일 미만)", "info" if miss else "ok", f"{len(miss)}개" if miss else "없음", miss[:30]))
+    Q = data.get("quality") or {"issues": [], "counts": {}}
+    Q["issues"] = Q.get("issues", []) + [i.to_dict() for i in issues]
+    Q["counts"] = {sev: sum(1 for i in Q["issues"] if i["severity"] == sev) for sev in ("critical", "serious", "warning", "info", "ok")}
+    data["quality"] = Q
+    log.info("추가 품질 점검 %d개: %s", len(issues), {i.check: i.severity for i in issues})
+
+
 def stocks_section(log, home: dict, extra: set[str] | None = None) -> dict:
     """종목 상세: 현재 유니버스 + 홈 순위표·업종 지도에 나온 주식. 종목마다 outputs/stocks/<코드>.js 로 따로 쓴다."""
     from src import stock_detail as sd
@@ -1128,6 +1252,7 @@ def main(argv=None) -> int:
     data["valuation"] = valuation_section(log, data)
     data["earnings"] = earnings_section(log)
     data["stocks"] = stocks_section(log, data["home"], {r["code"] for m in data["map"].values() for r in m["rows"]})
+    extra_quality(log, data)
     data["hcandles"] = data["home"].pop("candles", {})
     data["lazy"] = write_lazy(data, LAZY)
     html = TEMPLATE.read_text(encoding="utf-8").replace(
