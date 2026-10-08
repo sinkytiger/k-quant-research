@@ -39,6 +39,8 @@ def _r(x, d=4):
 
 def one(g: pd.DataFrame, days: int = 250, leveraged: bool = False) -> dict:
     """한 ETF 의 화면용 묶음 (Date 오름차순 g). 추적 차이 1년(250일)을 재려면 g 에 days+1 행 이상이 있어야 한다."""
+    if len(g) < 3:  # 막 상장한 ETF (전일 대비 계산에 이틀 이상 필요)
+        return {}
     full = g
     g = g.tail(days + 1)
     base = g["close"] - g["chg"]

@@ -26,3 +26,8 @@ def test_tracking_difference_and_leveraged():
     t = ed.one(g, days=65)["track_3m"]
     assert t is not None and abs(t["diff"] - (t["etf"] - t["idx"])) < 1e-4
     assert ed.one(g, days=65, leveraged=True)["track_3m"] is None
+
+
+def test_newly_listed_etf_is_skipped():
+    assert ed.one(_g(n=1), days=250) == {} and ed.one(_g(n=2), days=250) == {}
+    assert ed.one(_g(n=3), days=250)["close"]

@@ -1713,7 +1713,7 @@ function renderEtfDetail() {
   $("#etfd-head").innerHTML = `<h2>${esc(R.name)} <span class="muted" style="font-size:13px;font-weight:400">${R.code} · ${esc(R.category)}</span></h2><div class="sub">불러오는 중…</div>`;
   const want = ETF_CODE;
   loadEtf(want).then((E) => { if (want === ETF_CODE && TAB === "etfd") drawEtf(R, E, rows); })
-    .catch(() => { $("#etfd-body").innerHTML = `<div class="card muted">etfs/${esc(want)}.js 를 불러오지 못했다. 대시보드를 새로 만든 뒤 outputs 폴더째로 열어야 한다.</div>`; });
+    .catch(() => { $("#etfd-body").innerHTML = `<div class="card muted">상세 데이터가 없다. 상장 직후(거래일 3일 미만)이거나, 대시보드를 새로 만든 뒤 outputs 폴더째로 열어야 한다 (etfs/${esc(want)}.js).</div>`; });
 }
 function drawEtf(R, E, rows) {
   const toISO = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`;

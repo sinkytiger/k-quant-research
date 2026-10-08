@@ -571,7 +571,9 @@ def etf_detail_section(log, etf_rows: list[dict], days: int = 250) -> None:
     for code, g in t.groupby("code", sort=False):
         if code not in cats:
             continue
-        payloads[code] = ed.one(g, days - 1, leveraged=cats[code] == "레버리지·인버스")
+        one = ed.one(g, days - 1, leveraged=cats[code] == "레버리지·인버스")
+        if one:
+            payloads[code] = one
     n = sd.write_all(config.OUTPUTS / "etfs", clean(payloads), var="KQ_ETF")
     for r in etf_rows:
         p = payloads.get(r["code"])
