@@ -96,6 +96,9 @@ def data_status() -> dict:
                                          ("credit", "신용잔고 (유니버스)", 3, 5, "결제일 기준 공시라 매매일보다 2거래일가량 늦다")):
         ds_ = [sc.load(kind, c) for c in cur if sc.path(kind, c).exists()]
         add("KIS", label, lasts(d.index.max() for d in ds_ if len(d)), len(ds_), ok=ok, warn=warn, note=note)
+    from src.data import foreign as fx
+    fr = [fx.load(c) for c in cur if fx.path(c).exists()]
+    add("KIS", "외국인 지분율 (유니버스)", lasts(d.index.max() for d in fr if len(d)), len(fr))
     nl = []
     for c in cur:
         d = news.load(c)
@@ -932,6 +935,7 @@ def calendar_section(log, days: int = 45) -> list[dict]:
 
 def short_credit_section(log, days: int = 250) -> dict:
     """공매도·신용잔고 (유니버스): 종목별 최근 지표 + 유니버스 합산 일별 추이 (수급 탭)."""
+    from src.data import foreign as fx
     from src.data import short_credit as sc
 
     cur = sorted(membership.current_members())
@@ -939,10 +943,14 @@ def short_credit_section(log, days: int = 250) -> dict:
     rows, amt, val, loan = [], {}, {}, {}
     r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
     for c in cur:
-        s_, c_ = sc.load("short", c), sc.load("credit", c)
-        if s_.empty and c_.empty:
+        s_, c_, f_ = sc.load("short", c), sc.load("credit", c), fx.load(c)
+        if s_.empty and c_.empty and f_.empty:
             continue
         row = {"code": c, "name": names.get(c, c), "sector": sec.get(c, "기타")}
+        if len(f_):
+            row.update(fr=r4(f_["ratio"].iloc[-1]), fr_chg20=fx.change(f_, 28), fr_chg90=fx.change(f_, 91), fr_chg365=fx.change(f_, 365))
+            if f_.attrs["limit"] < 100:
+                row.update(fr_lim=f_.attrs["limit"], fr_ex=r4(f_["ehrt"].iloc[-1]))
         if len(s_):
             p = s_["short_amt_pct"]
             row.update(s5=r4(p.tail(5).mean()), s20=r4(p.tail(20).mean()), s60=r4(p.tail(60).mean()),
@@ -969,8 +977,10 @@ def sc_block(code: str, days: int = 250) -> dict:
     """종목 상세: 공매도 거래대금 비중(%)·신용 잔고율(%) 1년 + 최신값 (유니버스 종목만)."""
     from src.data import short_credit as sc
 
-    s_, c_ = sc.load("short", code), sc.load("credit", code)
-    if s_.empty and c_.empty:
+    from src.data import foreign as fx
+
+    s_, c_, f_ = sc.load("short", code), sc.load("credit", code), fx.load(code)
+    if s_.empty and c_.empty and f_.empty:
         return {}
     r = lambda x: None if x != x else round(float(x), 3)  # noqa: E731
     out = {}
@@ -982,6 +992,10 @@ def sc_block(code: str, days: int = 250) -> dict:
         t = c_.tail(days)
         out["credit"] = {"d": [f"{x:%y%m%d}" for x in t.index], "rate": [r(x) for x in t["loan_rate"]],
                          "amt": r(t["loan_amt"].iloc[-1]), "gvrt": r(t["loan_gvrt"].iloc[-1]), "date": f"{t.index.max():%Y-%m-%d}"}
+    if len(f_):
+        out["foreign"] = {"d": [f"{x:%y%m%d}" for x in f_.index], "v": [r(x) for x in f_["ratio"]], "date": f"{f_.index.max():%Y-%m-%d}",
+                          "c1m": fx.change(f_, 28), "c3m": fx.change(f_, 91), "c1y": fx.change(f_, 365),
+                          "lim": f_.attrs["limit"] if f_.attrs["limit"] < 100 else None, "ex": r(f_["ehrt"].iloc[-1])}
     return out
 
 
