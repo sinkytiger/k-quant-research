@@ -96,6 +96,9 @@ def data_status() -> dict:
                                          ("credit", "신용잔고 (유니버스)", 3, 5, "결제일 기준 공시라 매매일보다 2거래일가량 늦다")):
         ds_ = [sc.load(kind, c) for c in cur if sc.path(kind, c).exists()]
         add("KIS", label, lasts(d.index.max() for d in ds_ if len(d)), len(ds_), ok=ok, warn=warn, note=note)
+    from src.data import lending as ld
+    ln = [ld.load(c) for c in cur if ld.path(c).exists()]
+    add("KIS", "대차잔고 (유니버스)", lasts(d.index.max() for d in ln if len(d)), len(ln))
     from src.data import foreign as fx
     fr = [fx.load(c) for c in cur if fx.path(c).exists()]
     add("KIS", "외국인 지분율 (유니버스)", lasts(d.index.max() for d in fr if len(d)), len(fr))
@@ -936,10 +939,12 @@ def calendar_section(log, days: int = 45) -> list[dict]:
 def short_credit_section(log, days: int = 250) -> dict:
     """공매도·신용잔고 (유니버스): 종목별 최근 지표 + 유니버스 합산 일별 추이 (수급 탭)."""
     from src.data import foreign as fx
+    from src.data import lending as ld
     from src.data import short_credit as sc
 
     cur = sorted(membership.current_members())
     names, sec = membership.load_names(), _sectors()
+    caps = marketcap.cap_asof(pd.Timestamp.today(), cur)
     rows, amt, val, loan = [], {}, {}, {}
     r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
     for c in cur:
@@ -964,13 +969,28 @@ def short_credit_section(log, days: int = 250) -> dict:
             loan[c] = c_["loan_amt"]
         px = prices.load(c)["Close"].dropna() if prices.price_path(c).exists() else pd.Series(dtype=float)
         row["r20"] = r4(px.iloc[-1] / px.iloc[-21] - 1) if len(px) > 21 else None
+        l_ = ld.load(c)
+        if len(l_):
+            sh = lend_shares(caps.get(c), px)
+            q = l_["lend_qty"]
+            row.update(lend_amt=r4(l_["lend_amt"].iloc[-1]), lend_pct=r4(q.iloc[-1] / sh * 100) if sh else None,
+                       lend_chg20=r4(q.iloc[-1] / q.iloc[-21] - 1) if len(q) > 21 and q.iloc[-21] > 0 else None,
+                       l_date=f"{l_.index.max():%Y-%m-%d}")
         rows.append(row)
     A, V, L = pd.DataFrame(amt), pd.DataFrame(val), pd.DataFrame(loan)
     agg_s = (A.sum(axis=1) / V.sum(axis=1) * 100).dropna().tail(days) if len(A) else pd.Series(dtype=float)
     agg_l = (L.ffill().sum(axis=1) / 1e12).tail(days) if len(L) else pd.Series(dtype=float)
     log.info("공매도·신용 %d종목 (공매도 ~%s, 신용 ~%s)", len(rows), f"{agg_s.index.max():%Y-%m-%d}" if len(agg_s) else "-",
              f"{agg_l.index.max():%Y-%m-%d}" if len(agg_l) else "-")
-    return {"rows": rows, "short": series_points(agg_s), "loan": series_points(agg_l), "ban": ["2023-11-06", "2025-03-30"]}
+    lend = {k: series_points((ld.load(f"_{k}")["lend_amt"] / 1e12).tail(days)) for k in ("KOSPI", "KOSDAQ") if ld.path(f"_{k}").exists()}
+    return {"rows": rows, "short": series_points(agg_s), "loan": series_points(agg_l), "lend": lend, "ban": ["2023-11-06", "2025-03-30"]}
+
+
+def lend_shares(cap, px: pd.Series) -> float | None:
+    """상장주식 수 ≈ 최근 시가총액 ÷ 최근 종가 (대차잔고 비율의 분모). 둘 중 하나라도 없으면 None."""
+    if cap is None or cap != cap or not len(px) or not px.iloc[-1] > 0:
+        return None
+    return float(cap) / float(px.iloc[-1])
 
 
 def sc_block(code: str, days: int = 250) -> dict:
@@ -978,9 +998,10 @@ def sc_block(code: str, days: int = 250) -> dict:
     from src.data import short_credit as sc
 
     from src.data import foreign as fx
+    from src.data import lending as ld
 
-    s_, c_, f_ = sc.load("short", code), sc.load("credit", code), fx.load(code)
-    if s_.empty and c_.empty and f_.empty:
+    s_, c_, f_, l_ = sc.load("short", code), sc.load("credit", code), fx.load(code), ld.load(code)
+    if s_.empty and c_.empty and f_.empty and l_.empty:
         return {}
     r = lambda x: None if x != x else round(float(x), 3)  # noqa: E731
     out = {}
@@ -992,6 +1013,13 @@ def sc_block(code: str, days: int = 250) -> dict:
         t = c_.tail(days)
         out["credit"] = {"d": [f"{x:%y%m%d}" for x in t.index], "rate": [r(x) for x in t["loan_rate"]],
                          "amt": r(t["loan_amt"].iloc[-1]), "gvrt": r(t["loan_gvrt"].iloc[-1]), "date": f"{t.index.max():%Y-%m-%d}"}
+    if len(l_):
+        px = prices.load(code)["Close"].dropna() if prices.price_path(code).exists() else pd.Series(dtype=float)
+        sh = lend_shares(marketcap.cap_asof(pd.Timestamp.today(), [code]).get(code), px)
+        if sh:
+            t = l_.tail(days)
+            out["lend"] = {"d": [f"{x:%y%m%d}" for x in t.index], "pct": [r(x / sh * 100) for x in t["lend_qty"]],
+                           "amt": r(t["lend_amt"].iloc[-1]), "date": f"{t.index.max():%Y-%m-%d}"}
     if len(f_):
         out["foreign"] = {"d": [f"{x:%y%m%d}" for x in f_.index], "v": [r(x) for x in f_["ratio"]], "date": f"{f_.index.max():%Y-%m-%d}",
                           "c1m": fx.change(f_, 28), "c3m": fx.change(f_, 91), "c1y": fx.change(f_, 365),

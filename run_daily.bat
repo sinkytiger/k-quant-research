@@ -1,5 +1,5 @@
 @echo off
-REM K-Quant 일일 배치: KRX 스냅샷 증분 -> KIS 수급 증분 -> 공매도·신용 -> 외국인 지분율 -> KIS 뉴스 증분 -> 시장 지표 -> DART 공시 -> 페이퍼 NAV -> 대시보드 -> 분석 노트 Git 저장. 월 1회 run_monthly.
+REM K-Quant 일일 배치: KRX 스냅샷 증분 -> KIS 수급 증분 -> 공매도·신용 -> 대차잔고 -> 외국인 지분율 -> KIS 뉴스 증분 -> 시장 지표 -> DART 공시 -> 페이퍼 NAV -> 대시보드 -> 분석 노트 Git 저장. 월 1회 run_monthly.
 REM KRX 는 D일 데이터를 D+1 오전 8시 전후에 준다 -> 08:40 실행 권장.
 REM PC 가 꺼져 있던 기간은 "마지막 저장일 이후"부터 받으므로 자동으로 메워진다.
 chcp 65001 >nul
@@ -20,6 +20,8 @@ echo [universe] exit %errorlevel% >> "%LOG%"
 echo [flows] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\collect_short_credit.py --update >> "%LOG%" 2>&1
 echo [short_credit] exit %errorlevel% >> "%LOG%"
+"%PY%" scripts\collect_lending.py --update >> "%LOG%" 2>&1
+echo [lending] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\collect_foreign.py --update >> "%LOG%" 2>&1
 echo [foreign] exit %errorlevel% >> "%LOG%"
 "%PY%" scripts\collect_news.py --update >> "%LOG%" 2>&1

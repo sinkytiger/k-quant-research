@@ -15,3 +15,10 @@ def test_state_thresholds_per_item():
     # 신용잔고는 결제일 공시라 3영업일까지 정상
     assert b._state(3, 3, 5)[0] == "good"
     assert b._state(9, 8, 15, "일") == ("warning", "9일 지연")
+
+
+def test_lend_shares_from_cap_and_close():
+    import pandas as pd
+    assert b.lend_shares(1_000_000.0, pd.Series([90.0, 100.0])) == 10_000
+    assert b.lend_shares(None, pd.Series([100.0])) is None
+    assert b.lend_shares(1.0, pd.Series(dtype=float)) is None

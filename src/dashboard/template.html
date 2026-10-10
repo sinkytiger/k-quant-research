@@ -167,6 +167,8 @@ td a { color: var(--series-1); text-decoration: none; } td a:hover { text-decora
 .note { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-2); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 .grid2 > .card { margin-top: var(--sp-3); }
+.grid3 { grid-template-columns: 1fr 1fr 1fr; }
+@media (max-width: 1100px) { .grid3 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
 .map-wrap { display: grid; grid-template-columns: 1fr 230px; gap: 12px; margin-top: 10px; }
 .treemap { position: relative; height: 520px; border-radius: var(--r-md); overflow: hidden; background: var(--page); }
@@ -436,16 +438,19 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
         <div class="card"><div class="sub" id="fb-sec-sub"></div><div class="chart" id="ch-fb-sec"></div></div>
       </div>
     </div>
-    <h2 style="margin-top: 28px">공매도 · 신용잔고</h2>
+    <h2 style="margin-top: 28px">공매도 · 대차잔고 · 신용잔고</h2>
     <div class="sub" id="sc-sub"></div>
-    <div class="grid2">
+    <div class="grid2 grid3">
       <div class="card"><div class="sub">공매도 거래 비중 (유니버스 합, 거래대금 대비 %, 5일 평균)</div><div class="chart" id="ch-sc-short"></div></div>
       <div class="card"><div class="sub">신용융자 잔고 (유니버스 합, 조원)</div><div class="chart" id="ch-sc-loan"></div></div>
+      <div class="card"><div class="sub">대차잔고 (시장 전체, 조원)</div><div class="legend" id="lg-sc-lend"></div><div class="chart" id="ch-sc-lend"></div></div>
     </div>
     <div class="ctl-row"><div class="rank-tabs row" id="sc-list" role="group" aria-label="목록"></div></div>
     <div class="card scroll"><table id="sc-table"></table>
       <div class="note">KIS 공매도 일별추이·신용잔고 일별추이. 공매도 비중 = 그날 거래대금 중 공매도 몫(%). 공매도 잔고는 이 API 에 없다.
-        2023-11-06 ~ 2025-03-30 은 공매도 전면 금지 기간이라 0. 신용 잔고율 = 융자 잔고 주수 ÷ 상장주식(%), 신용 공시는 결제일 기준이라 매매일보다 2거래일가량 늦다.</div></div>
+        2023-11-06 ~ 2025-03-30 은 공매도 전면 금지 기간이라 0. 신용 잔고율 = 융자 잔고 주수 ÷ 상장주식(%), 신용 공시는 결제일 기준이라 매매일보다 2거래일가량 늦다.
+        대차잔고 = 기관끼리 빌려 간 주식 중 아직 안 갚은 것 (KIS 대차거래추이). 공매도하려면 먼저 빌려야 해서 공매도 잔고의 대용으로 보지만, 빌린 주식이 다 공매도되는 것은 아니다(차익·헤지·결제용 포함).
+        대차 비율 = 잔고 주수 ÷ 상장주식(%), 금액은 그날 종가 기준이라 주가가 오르면 같이 커진다.</div></div>
     <h2 style="margin-top: 28px">외국인 지분율</h2>
     <div class="sub" id="fr-sub"></div>
     <div class="ctl-row"><div class="rank-tabs row" id="fr-list" role="group" aria-label="목록"></div></div>
@@ -1287,9 +1292,9 @@ function drawStock(S) {
           : `<div class="note">${S.market === "코스피" ? "최근 6개월 공시 없음" + (insider ? ` (임원·주요주주 소유 보고 ${insider}건 제외)` : "") : "공시 목록은 유가증권(코스피)만 받는다"}</div>`}
       </div>
     </div>
-    ${S.sc && (S.sc.short || S.sc.credit) ? `<div class="card"><div class="sub" id="stk-sc-sub"></div><div class="grid2" style="gap:16px">
+    ${S.sc && (S.sc.short || S.sc.credit || S.sc.lend) ? `<div class="card"><div class="sub" id="stk-sc-sub"></div><div class="grid2" style="gap:16px">
       <div><div class="sub" style="font-size:12px">공매도 거래 비중 (%, 5일 평균)</div><div class="chart" id="ch-stk-short"></div></div>
-      <div><div class="sub" style="font-size:12px">신용 잔고율 (상장주식 대비 %)</div><div class="chart" id="ch-stk-credit"></div></div></div>
+      <div><div class="sub" style="font-size:12px">대차잔고 · 신용잔고 (상장주식 대비 %)</div><div class="legend" id="lg-stk-credit"></div><div class="chart" id="ch-stk-credit"></div></div></div>
       <div class="note">2023-11-06 ~ 2025-03-30 은 공매도 금지 기간. 신용은 결제일 기준 공시라 매매일보다 2거래일가량 늦다.</div></div>` : ""}
     ${S.sc && S.sc.foreign ? `<div class="card"><div class="sub" id="stk-fr-sub"></div><div class="chart" id="ch-stk-fr"></div>
       <div class="note">외국인 보유 주식 ÷ 상장주식(%). 최근 30거래일은 일별, 그 앞은 주·월 말 값.</div></div>` : ""}
@@ -1311,15 +1316,18 @@ function drawStock(S) {
     })()}
     <div class="note">표시용 정보이며 매매 권유가 아니다.</div>`;
   if (S.band && S.band.d) drawBand(S);
-  if (S.sc && (S.sc.short || S.sc.credit)) {
-    const iso = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`, sh = S.sc.short, cr = S.sc.credit;
+  if (S.sc && (S.sc.short || S.sc.credit || S.sc.lend)) {
+    const iso = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`, sh = S.sc.short, cr = S.sc.credit, ln = S.sc.lend;
     $("#stk-sc-sub").textContent = `공매도 · 신용 · ` + [sh ? `공매도 비중 5일 ${sh.s5 == null ? "–" : sh.s5.toFixed(2) + "%"} (60일 ${sh.s60 == null ? "–" : sh.s60.toFixed(2) + "%"})` : "",
+      ln ? `대차잔고 ${krw(ln.amt)} (${ln.pct.at(-1).toFixed(2)}%)` : "",
       cr ? `신용 잔고 ${krw(cr.amt)} · 잔고율 ${cr.rate.at(-1)}% · 공여율 ${cr.gvrt}% (${KDATE(cr.date)})` : ""].filter(Boolean).join(" · ");
     if (sh) { const pts = sh.d.map((d, i) => [iso(d), sh.pct[i]]).filter((p) => p[1] != null);
       const m5 = pts.map((p, i) => [p[0], pts.slice(Math.max(0, i - 4), i + 1).reduce((a, q) => a + q[1], 0) / Math.min(5, i + 1)]);
       lineChart($("#ch-stk-short"), [{ name: "공매도 비중", color: css("--series-1"), points: m5 }], { height: 160, yfmt: (v) => v.toFixed(1) + "%", aria: "공매도 비중" }); }
-    if (cr) lineChart($("#ch-stk-credit"), [{ name: "신용 잔고율", color: css("--series-2"), points: cr.d.map((d, i) => [iso(d), cr.rate[i]]).filter((p) => p[1] != null) }],
-      { height: 160, yfmt: (v) => v.toFixed(2) + "%", aria: "신용 잔고율" });
+    const CS = [ln ? { name: "대차잔고", color: css("--series-3"), points: ln.d.map((d, i) => [iso(d), ln.pct[i]]).filter((p) => p[1] != null) } : null,
+      cr ? { name: "신용잔고", color: css("--series-2"), points: cr.d.map((d, i) => [iso(d), cr.rate[i]]).filter((p) => p[1] != null) } : null].filter(Boolean);
+    $("#lg-stk-credit").innerHTML = CS.map((s) => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join("");
+    if (CS.length) lineChart($("#ch-stk-credit"), CS, { height: 160, yfmt: (v) => v.toFixed(2) + "%", aria: "대차잔고·신용잔고 비율" });
   }
   if (S.sc && S.sc.foreign) {
     const F = S.sc.foreign, iso = (d) => `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4)}`;
@@ -2112,13 +2120,18 @@ function renderShortCredit() {
     { height: 180, yfmt: (v) => v.toFixed(1) + "%", aria: "공매도 거래 비중" });
   lineChart($("#ch-sc-loan"), [{ name: "신용융자 잔고", color: css("--series-2"), points: X.loan }],
     { height: 180, yfmt: (v) => v.toFixed(1) + "조", aria: "신용융자 잔고" });
+  const LS = [["KOSPI", "코스피", "--series-3"], ["KOSDAQ", "코스닥", "--series-4"]].filter(([k]) => X.lend && X.lend[k] && X.lend[k].length)
+    .map(([k, n, c]) => ({ name: n, color: css(c), points: X.lend[k] }));
+  $("#lg-sc-lend").innerHTML = LS.map((s) => `<span><i style="background:${s.color}"></i>${s.name} ${s.points.at(-1)[1].toFixed(1)}조</span>`).join("");
+  if (LS.length) lineChart($("#ch-sc-lend"), LS, { height: 160, yfmt: (v) => v.toFixed(0) + "조", aria: "대차잔고" });
   let R = [...X.rows];
-  const key = { short: (r) => r.s5, surge: (r) => (r.s60 > 0.5 ? r.s5 / r.s60 : null), rate: (r) => r.loan_rate, chg: (r) => r.loan_chg20 }[SC_LIST];
+  const key = { short: (r) => r.s5, surge: (r) => (r.s60 > 0.5 ? r.s5 / r.s60 : null), lend: (r) => r.lend_pct, lendchg: (r) => (r.lend_pct >= 0.5 ? r.lend_chg20 : null),
+    rate: (r) => r.loan_rate, chg: (r) => r.loan_chg20 }[SC_LIST];
   R = R.filter((r) => key(r) != null).sort((a, b) => key(b) - key(a)).slice(0, 20);
   const pc = (v, d = 2) => v == null ? "–" : v.toFixed(d) + "%";
-  $("#sc-table").innerHTML = `<thead><tr><th class="rk">순위</th><th>종목</th><th>업종</th><th class="num">공매도 5일</th><th class="num">공매도 60일</th><th class="num">신용 잔고율</th><th class="num">신용 잔고</th><th class="num">잔고 20일 변화</th><th class="num">20일 수익률</th></tr></thead><tbody>` +
+  $("#sc-table").innerHTML = `<thead><tr><th class="rk">순위</th><th>종목</th><th>업종</th><th class="num">공매도 5일</th><th class="num">공매도 60일</th><th class="num">대차 비율</th><th class="num">대차 20일</th><th class="num">신용 잔고율</th><th class="num">신용 잔고</th><th class="num">잔고 20일 변화</th><th class="num">20일 수익률</th></tr></thead><tbody>` +
     R.map((r, i) => `<tr><td class="rk">${i + 1}</td><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}</td><td class="muted">${esc(r.sector)}</td>
-      <td class="num">${pc(r.s5)}</td><td class="num muted">${pc(r.s60)}</td><td class="num">${pc(r.loan_rate)}</td><td class="num">${krw(r.loan_amt)}</td>
+      <td class="num">${pc(r.s5)}</td><td class="num muted">${pc(r.s60)}</td><td class="num">${pc(r.lend_pct)}</td><td class="num ${signCls(r.lend_chg20)}">${fmtPct(r.lend_chg20, 1)}</td><td class="num">${pc(r.loan_rate)}</td><td class="num">${krw(r.loan_amt)}</td>
       <td class="num ${signCls(r.loan_chg20)}">${fmtPct(r.loan_chg20, 1)}</td><td class="num ${signCls(r.r20)}">${fmtPct(r.r20, 1)}</td></tr>`).join("") + "</tbody>";
 }
 function renderQuality() {
@@ -2467,7 +2480,7 @@ seg($("#val-cap"), [[0, "시총 전체"], [1e11, "1천억+"], [1e12, "1조+"], [
 seg($("#hl-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => HL_MKT, (v) => { HL_MKT = v; renderHighLow(); });
 seg($("#hl-smooth"), [[1, "일별"], [5, "5일 평균"], [20, "20일 평균"]], () => HL_SMOOTH, (v) => { HL_SMOOTH = +v; renderHighLow(); });
 seg($("#fr-list"), [["up", "1개월 증가 순"], ["dn", "1개월 감소 순"], ["y", "1년 증가 순"], ["lvl", "지분율 높은 순"]], () => FR_LIST, (v) => { FR_LIST = v; renderForeign(); });
-seg($("#sc-list"), [["short", "공매도 비중 높은 순"], ["surge", "공매도 급증 (5일 ÷ 60일)"], ["rate", "신용 잔고율 높은 순"], ["chg", "신용 잔고 20일 증가 순"]], () => SC_LIST, (v) => { SC_LIST = v; renderShortCredit(); });
+seg($("#sc-list"), [["short", "공매도 비중 높은 순"], ["surge", "공매도 급증 (5일 ÷ 60일)"], ["lend", "대차 비율 높은 순"], ["lendchg", "대차잔고 20일 증가 순"], ["rate", "신용 잔고율 높은 순"], ["chg", "신용 잔고 20일 증가 순"]], () => SC_LIST, (v) => { SC_LIST = v; renderShortCredit(); });
 seg($("#fb-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => FB_MKT, (v) => { FB_MKT = v; renderFlowBoard(); });
 seg($("#fb-per"), [[60, "3개월"], [120, "6개월"], [250, "1년"]], () => FB_PER, (v) => { FB_PER = +v; renderFlowBoard(); });
 seg($("#fb-inv"), FB_INVS, () => FB_INV, (v) => { FB_INV = v; renderFlowBoard(); });
