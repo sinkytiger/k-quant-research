@@ -944,7 +944,7 @@ def short_credit_section(log, days: int = 250) -> dict:
 
     cur = sorted(membership.current_members())
     names, sec = membership.load_names(), _sectors()
-    caps = marketcap.cap_asof(pd.Timestamp.today(), cur)
+    caps = _caps_now()
     rows, amt, val, loan = [], {}, {}, {}
     r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
     for c in cur:
@@ -986,6 +986,17 @@ def short_credit_section(log, days: int = 250) -> dict:
     return {"rows": rows, "short": series_points(agg_s), "loan": series_points(agg_l), "lend": lend, "ban": ["2023-11-06", "2025-03-30"]}
 
 
+_CAPS: pd.Series | None = None
+
+
+def _caps_now() -> pd.Series:
+    """가장 최근 시가총액 스냅샷 (한 번만 읽는다 — cap_asof 는 부를 때마다 스냅샷 파일 수천 개를 검사한다)."""
+    global _CAPS
+    if _CAPS is None:
+        _CAPS = marketcap.cap_asof(pd.Timestamp.today())
+    return _CAPS
+
+
 def lend_shares(cap, px: pd.Series) -> float | None:
     """상장주식 수 ≈ 최근 시가총액 ÷ 최근 종가 (대차잔고 비율의 분모). 둘 중 하나라도 없으면 None."""
     if cap is None or cap != cap or not len(px) or not px.iloc[-1] > 0:
@@ -1015,7 +1026,7 @@ def sc_block(code: str, days: int = 250) -> dict:
                          "amt": r(t["loan_amt"].iloc[-1]), "gvrt": r(t["loan_gvrt"].iloc[-1]), "date": f"{t.index.max():%Y-%m-%d}"}
     if len(l_):
         px = prices.load(code)["Close"].dropna() if prices.price_path(code).exists() else pd.Series(dtype=float)
-        sh = lend_shares(marketcap.cap_asof(pd.Timestamp.today(), [code]).get(code), px)
+        sh = lend_shares(_caps_now().get(code), px)
         if sh:
             t = l_.tail(days)
             out["lend"] = {"d": [f"{x:%y%m%d}" for x in t.index], "pct": [r(x / sh * 100) for x in t["lend_qty"]],
