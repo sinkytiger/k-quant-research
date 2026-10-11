@@ -65,6 +65,8 @@ def _get(path: str, params: dict, binary: bool = False, retries: int = 3):
             r.raise_for_status()
             if binary:
                 return r.content
+            if "<html" in r.text[:500].lower():  # 점검 중이면 JSON 대신 안내 HTML 이 온다
+                raise DartFinError("DART 점검 중 (JSON 대신 HTML 응답)")
             j = r.json()
         except (requests.RequestException, ValueError) as e:
             err = e
@@ -75,6 +77,8 @@ def _get(path: str, params: dict, binary: bool = False, retries: int = 3):
             return j
         if st == "020":
             raise DartFinError(f"DART 호출 한도 초과: {j.get('message')}")
+        if st == "800":
+            raise DartFinError(f"DART 점검 중: {j.get('message')}")
         err = DartFinError(f"DART {st}: {j.get('message')}")
         time.sleep(2.0 * (attempt + 1))
     raise DartFinError(str(err))
@@ -134,7 +138,7 @@ def fetch(year: int, reprt: str, corps: list[str], chunk: int = 100, skipped: li
             j = _get("fnlttMultiAcnt.json", {"corp_code": ",".join(group), "bsns_year": str(year), "reprt_code": reprt}, retries=2)
             parts.append(parse_multi(list(j.get("list") or []), reprt))
         except DartFinError as e:
-            if "한도" in str(e):
+            if "한도" in str(e) or "점검" in str(e):  # 묶음 문제가 아니라 DART 전체 문제 → 쪼개 봐야 소용없다
                 raise
             if len(group) == 1:
                 if skipped is not None:

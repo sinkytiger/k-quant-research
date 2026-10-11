@@ -81,8 +81,14 @@ def collect(log, todo, corps, force: bool) -> int:
         except f.DartFinError as e:
             log.error("%d %s: %s", y, r, e)
             return 2
-        f.save(y, r, df)
         n = df["stock_code"].nunique() if len(df) else 0
+        old = f.path(y, r)
+        if old.exists():
+            n_old = pd.read_csv(old, usecols=["stock_code"], dtype=str)["stock_code"].nunique()
+            if n < 0.8 * n_old:  # 다시 받은 것이 확 줄었으면 응답 오류일 가능성이 크다 → 덮어쓰지 않는다
+                log.error("%d %s: 다시 받은 회사 %d개 < 기존 %d개의 80%% → 저장 안 함 (건너뜀 %d개)", y, r, n, n_old, len(skipped))
+                return 2
+        f.save(y, r, df)
         log.info("%d %s: %d개 회사%s", y, r, n, f" (응답 오류로 건너뜀 {len(skipped)}개: {skipped[:5]})" if skipped else "")
     return 0
 

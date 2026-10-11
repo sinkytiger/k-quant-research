@@ -67,3 +67,24 @@ def test_suspect_unit_error_flagged_and_metrics_dropped():
     bad = v.metrics(q, {"000001": 1.0})  # TTM 순이익 21 > 시총 1 × 5 → 단위 오류로 본다
     assert bad.loc["000001", "suspect"]
     assert pd.isna(bad.loc["000001", "per"])
+
+
+def test_dart_maintenance_aborts_without_splitting(monkeypatch):
+    """점검 중(HTML 응답)이면 묶음을 반으로 쪼개며 회사마다 다시 부르지 않고 바로 멈춘다 (2026-10-11 주간 배치가 몇 시간 돌 뻔함)."""
+    import pytest
+
+    calls = []
+
+    class R:
+        status_code = 200
+        text = "<!DOCTYPE html><html><head><title>시스템 점검</title></head></html>"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setenv("DART_API_KEY", "x")
+    monkeypatch.setattr(f, "MIN_INTERVAL", 0)
+    monkeypatch.setattr(f.requests, "get", lambda *a, **k: calls.append(1) or R())
+    with pytest.raises(f.DartFinError, match="점검"):
+        f.fetch(2026, "11012", [f"{i:08d}" for i in range(100)])
+    assert len(calls) == 1
