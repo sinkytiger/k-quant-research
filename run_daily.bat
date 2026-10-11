@@ -13,6 +13,14 @@ for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMM"') do se
 if not exist logs mkdir logs
 set "LOG=logs\daily_%TODAY%.log"
 
+REM 따라잡기: 작업 스케줄러가 08:40 말고도 로그온·절전 해제 때 이 파일을 부른다 (PC 가 08:40 에 자고 있던 날을 위해).
+REM 오늘 이미 끝났거나, 08:40 전(KRX 전날 데이터가 아직 없음)이거나, 일요일이면 그냥 끝낸다. 손으로 다시 돌릴 때는: run_daily.bat force
+if /i not "%~1"=="force" (
+  if exist "%LOG%" findstr /c:"daily end" "%LOG%" >nul && exit /b 0
+  powershell -NoProfile -Command "$n=Get-Date; if ($n.DayOfWeek -eq 'Sunday' -or $n.ToString('HHmm') -lt '0840') { exit 1 }"
+  if errorlevel 1 exit /b 0
+)
+
 echo ==== %date% %time% daily start >> "%LOG%"
 "%PY%" scripts\collect_universe.py --update --markets stk ksq >> "%LOG%" 2>&1
 echo [universe] exit %errorlevel% >> "%LOG%"
