@@ -96,6 +96,9 @@ def data_status() -> dict:
                                          ("credit", "신용잔고 (유니버스)", 3, 5, "결제일 기준 공시라 매매일보다 2거래일가량 늦다")):
         ds_ = [sc.load(kind, c) for c in cur if sc.path(kind, c).exists()]
         add("KIS", label, lasts(d.index.max() for d in ds_ if len(d)), len(ds_), ok=ok, warn=warn, note=note)
+    from src.data import program as pg
+    pr = pg.load("_KOSPI")
+    add("KIS", "프로그램 매매 (시장·유니버스)", pr.index.max() if len(pr) else None, sum(1 for c in cur if pg.path(c).exists()))
     from src.data import lending as ld
     ln = [ld.load(c) for c in cur if ld.path(c).exists()]
     add("KIS", "대차잔고 (유니버스)", lasts(d.index.max() for d in ln if len(d)), len(ln))
@@ -936,6 +939,43 @@ def calendar_section(log, days: int = 45) -> list[dict]:
     return ev
 
 
+def program_section(log, days: int = 250) -> dict:
+    """프로그램 매매 (수급 탭): 코스피·코스닥 차익·비차익 순매수 1·5·20·60일 합, 1년 누적, 다음 만기일, 유니버스 종목 순위."""
+    from src.data import market_extra as mx
+    from src.data import program as pg
+
+    out = {"mkt": {}}
+    for key, name in (("_KOSPI", "코스피"), ("_KOSDAQ", "코스닥")):
+        d = pg.load(key)
+        if d.empty:
+            continue
+        sums = {f"{c}_{n}": float(d[c].tail(n).sum()) for c in ("arb_net", "nonarb_net", "net") for n in (1, 5, 20, 60)}
+        t = d.tail(days)
+        out["mkt"][key.strip("_")] = {"name": name, "date": f"{d.index.max():%Y-%m-%d}", **sums,
+                                       "cum_arb": series_points((t["arb_net"].cumsum() / 1e12).round(4)),
+                                       "cum_nonarb": series_points((t["nonarb_net"].cumsum() / 1e12).round(4))}
+    exp = pg.next_expiries(pd.Timestamp.today(), mx.load_calendar())
+    out["expiry"] = {k: f"{v:%Y-%m-%d}" for k, v in exp.items()}
+    names, sec, caps = membership.load_names(), _sectors(), _caps_now()
+    r4 = lambda x: None if x is None or x != x else round(float(x), 4)  # noqa: E731
+    rows = []
+    for c in sorted(membership.current_members()):
+        d = pg.load(c)
+        if len(d) < 5:
+            continue
+        px = prices.load(c)["Close"].dropna() if prices.price_path(c).exists() else pd.Series(dtype=float)
+        n5, n20, v5 = d["net"].tail(5).sum(), d["net"].tail(20).sum(), d["value"].tail(5).sum()
+        cap = caps.get(c)
+        rows.append({"code": c, "name": names.get(c, c), "sector": sec.get(c, "기타"), "n1": r4(d["net"].iloc[-1]), "n5": r4(n5), "n20": r4(n20),
+                     "v5": r4(n5 / v5) if v5 > 0 else None, "c20": r4(n20 / cap) if cap and cap == cap else None,
+                     "r20": r4(px.iloc[-1] / px.iloc[-21] - 1) if len(px) > 21 else None})
+    out["rows"] = rows
+    k = out["mkt"].get("KOSPI", {})
+    log.info("프로그램 매매: 코스피 %s 전체 %.2f조 (비차익 %.2f조), 종목 %d개, 다음 동시만기 %s", k.get("date", "-"), k.get("net_1", 0) / 1e12,
+             k.get("nonarb_net_1", 0) / 1e12, len(rows), out["expiry"].get("quarterly"))
+    return out
+
+
 def short_credit_section(log, days: int = 250) -> dict:
     """공매도·신용잔고 (유니버스): 종목별 최근 지표 + 유니버스 합산 일별 추이 (수급 탭)."""
     from src.data import foreign as fx
@@ -1270,7 +1310,7 @@ def monitor(log) -> dict:
 
 
 # 첫 화면(홈)에 필요 없는 큰 데이터 — 그 탭을 처음 열 때 data/<키>.js 를 불러온다
-LAZY = ("etf", "regime", "research", "market", "mval", "monitor", "mrank", "hcandles", "shortcredit")
+LAZY = ("etf", "regime", "research", "market", "mval", "monitor", "mrank", "hcandles", "shortcredit", "program")
 
 
 def write_lazy(data: dict, keys) -> list[str]:
@@ -1297,6 +1337,7 @@ def main(argv=None) -> int:
     data["notes"] = notes_section(log)
     data["flowboard"] = flows_board_section(log)
     data["shortcredit"] = short_credit_section(log)
+    data["program"] = program_section(log)
     data["highlow"] = highlow_section(log)
     data["rotation"] = rotation_section(log)
     data["mrank"] = mcap_rank_section(log)

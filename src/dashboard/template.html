@@ -438,6 +438,17 @@ input.search { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 
         <div class="card"><div class="sub" id="fb-sec-sub"></div><div class="chart" id="ch-fb-sec"></div></div>
       </div>
     </div>
+    <h2 style="margin-top: 28px">프로그램 매매</h2>
+    <div class="sub" id="pg-sub"></div>
+    <div class="grid2">
+      <div class="card scroll"><table id="pg-sum"></table></div>
+      <div class="card"><div class="card-h"><div class="sub">1년 누적 순매수 (조원)</div><div class="rank-tabs row" id="pg-mkt" role="group" aria-label="시장"></div></div>
+        <div class="legend" id="lg-pg"></div><div class="chart" id="ch-pg"></div></div>
+    </div>
+    <div class="ctl-row"><div class="rank-tabs row" id="pg-list" role="group" aria-label="목록"></div></div>
+    <div class="card scroll"><table id="pg-table"></table>
+      <div class="note">KIS 프로그램매매 종합현황·종목별 프로그램매매추이 (확정치). 차익 = 선물과 현물 바스켓의 가격 차이를 노리는 거래로, 선물·옵션 만기일(그달 둘째 목요일, 3·6·9·12월은 선물까지 동시만기) 근처에 몰렸다가 풀린다.
+        비차익 = 여러 종목을 바구니로 한 번에 사고파는 거래(주로 외국인·기관의 지수형 매매). 종목 표의 "거래대금 대비" = 5일 프로그램 순매수 ÷ 5일 거래대금, "시총 대비" = 20일 순매수 ÷ 시가총액.</div></div>
     <h2 style="margin-top: 28px">공매도 · 대차잔고 · 신용잔고</h2>
     <div class="sub" id="sc-sub"></div>
     <div class="grid2 grid3">
@@ -2093,6 +2104,31 @@ function renderCalendar() {
       <span class="tt">${e.code ? `<a href="#stock:${e.code}">${esc(e.title)}</a>` : esc(e.title)}</span>${e.note ? `<span class="muted" style="font-size:12px">${esc(e.note)}</span>` : ""}</li>`;
   }).join("") : `<li class="muted">앞으로 45일 안에 등록된 일정이 없다</li>`;
 }
+/* ---------- 프로그램 매매 (수급 탭) ---------- */
+let PG_MKT = "KOSPI", PG_LIST = "buy";
+function renderProgram() {
+  const X = D.program;
+  if (!X || !X.mkt || !Object.keys(X.mkt).length) { $("#pg-sub").textContent = "데이터 없음"; return; }
+  const jo = (v) => v == null ? "–" : (v >= 0 ? "+" : "−") + (Math.abs(v) >= 1e12 ? (Math.abs(v) / 1e12).toFixed(2) + "조" : Math.round(Math.abs(v) / 1e8).toLocaleString("ko-KR") + "억");
+  const K = X.mkt.KOSPI || Object.values(X.mkt)[0], E = X.expiry || {};
+  const dd = (a) => a ? Math.round((new Date(a) - new Date(K.date)) / 864e5) : null;
+  $("#pg-sub").textContent = `${KDATE(K.date)} 코스피 프로그램 ${jo(K.net_1)} (차익 ${jo(K.arb_net_1)} · 비차익 ${jo(K.nonarb_net_1)})` +
+    (E.monthly ? ` · 다음 옵션 만기 ${KDATE(E.monthly)}` : "") + (E.quarterly ? ` · 다음 동시만기(선물) ${KDATE(E.quarterly)}` : "");
+  const head = `<thead><tr><th>시장 · 구분</th><th class="num">1일</th><th class="num">5일</th><th class="num">20일</th><th class="num">60일</th></tr></thead>`;
+  $("#pg-sum").innerHTML = head + "<tbody>" + Object.values(X.mkt).map((m) => [["nonarb_net", "비차익"], ["arb_net", "차익"], ["net", "전체"]].map(([k, l], i) =>
+    `<tr${i === 2 ? ' style="font-weight:600"' : ""}><td>${i === 0 ? `<b>${m.name}</b> ` : ""}<span class="${i === 0 ? "" : "muted"}">${l}</span></td>` +
+    [1, 5, 20, 60].map((n) => `<td class="num ${signCls(m[`${k}_${n}`])}">${jo(m[`${k}_${n}`])}</td>`).join("") + "</tr>").join("")).join("") + "</tbody>";
+  const M = X.mkt[PG_MKT] || K;
+  const S = [{ name: "비차익", color: css("--series-1"), points: M.cum_nonarb }, { name: "차익", color: css("--series-2"), points: M.cum_arb }];
+  $("#lg-pg").innerHTML = S.map((s) => `<span><i style="background:${s.color}"></i>${s.name} ${s.points.length ? s.points.at(-1)[1].toFixed(1) + "조" : ""}</span>`).join("");
+  lineChart($("#ch-pg"), S, { height: 190, yfmt: (v) => v.toFixed(0) + "조", aria: "프로그램 누적 순매수" });
+  const key = { buy: (r) => r.n5, sell: (r) => (r.n5 == null ? null : -r.n5), vbuy: (r) => r.v5, vsell: (r) => (r.v5 == null ? null : -r.v5) }[PG_LIST];
+  const R = (X.rows || []).filter((r) => key(r) != null).sort((a, b) => key(b) - key(a)).slice(0, 20);
+  $("#pg-table").innerHTML = `<thead><tr><th class="rk">순위</th><th>종목</th><th>업종</th><th class="num">1일</th><th class="num">5일</th><th class="num">거래대금 대비 (5일)</th><th class="num">20일</th><th class="num">시총 대비 (20일)</th><th class="num">20일 수익률</th></tr></thead><tbody>` +
+    R.map((r, i) => `<tr><td class="rk">${i + 1}</td><td>${STOCK_SET.has(r.code) ? `<a href="#stock:${r.code}">${esc(r.name)}</a>` : esc(r.name)}</td><td class="muted">${esc(r.sector)}</td>
+      <td class="num ${signCls(r.n1)}">${jo(r.n1)}</td><td class="num ${signCls(r.n5)}">${jo(r.n5)}</td><td class="num ${signCls(r.v5)}">${fmtPct(r.v5, 1)}</td>
+      <td class="num ${signCls(r.n20)}">${jo(r.n20)}</td><td class="num ${signCls(r.c20)}">${fmtPct(r.c20, 2)}</td><td class="num ${signCls(r.r20)}">${fmtPct(r.r20, 1)}</td></tr>`).join("") + "</tbody>";
+}
 /* ---------- 공매도·신용·외국인 지분율 (수급 탭) ---------- */
 let SC_LIST = "short", FR_LIST = "up";
 function renderForeign() {
@@ -2400,7 +2436,7 @@ function renderMonitor() {
     { key: "flow_inst", label: "기관", num: true, fmt: flow },
   ], rows, { sortable: true, sortKey: "mcap_trn" });
 }
-const RENDER = { flows: () => { renderFlowBoard(); renderShortCredit(); renderForeign(); }, earnings: () => renderEarnings(), mrank: () => renderMrank(), screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(),  notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
+const RENDER = { flows: () => { renderFlowBoard(); renderProgram(); renderShortCredit(); renderForeign(); }, earnings: () => renderEarnings(), mrank: () => renderMrank(), screener: () => renderScreener(), valuation: () => renderValuation(), etfd: () => renderEtfDetail(), highlow: () => renderHighLow(),  notes: () => renderNotes(), home: () => renderHome(), stock: () => renderStock(), compare: () => renderCompare(), filings: () => renderFilings(), overview: () => { renderTiles(); renderStatus(); renderQuality(); }, market: () => { renderMarket(); renderMval(); renderRegime(); }, paper: () => renderPaper(),
   research: () => renderResearch(), monitor: () => renderMonitor(), etf: () => renderEtf() };
 let TAB = "home";
 const LAB = ["research", "paper", "monitor", "notes"], MKT = ["flows", "highlow", "earnings", "mrank", "market"];
@@ -2408,7 +2444,7 @@ let LAB_LAST = "research", MKT_LAST = "flows";
 try { const v = localStorage.getItem("kq-lab"); if (LAB.includes(v)) LAB_LAST = v; } catch (e) {}
 try { const v = localStorage.getItem("kq-mkt"); if (MKT.includes(v)) MKT_LAST = v; } catch (e) {}
 /* 탭을 열 때 필요한 데이터 (첫 화면을 가볍게: 나머지는 outputs/data/<키>.js) */
-const NEED = { flows: ["shortcredit"], overview: ["market"], market: ["market", "regime", "mval"], compare: ["market"], filings: ["research"], research: ["research"],
+const NEED = { flows: ["shortcredit", "program"], overview: ["market"], market: ["market", "regime", "mval"], compare: ["market"], filings: ["research"], research: ["research"],
   monitor: ["monitor"], mrank: ["mrank"], etf: ["etf"], etfd: ["etf"] };
 function ensureData(keys) {
   const lazy = new Set(D.lazy || []);
@@ -2479,6 +2515,8 @@ seg($("#val-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스�
 seg($("#val-cap"), [[0, "시총 전체"], [1e11, "1천억+"], [1e12, "1조+"], [1e13, "10조+"]], () => VAL_CAP, (v) => { VAL_CAP = +v; VAL_LIMIT = 50; renderValuation(); });
 seg($("#hl-mkt"), [["전체", "전체"], ["코스피", "코스피"], ["코스닥", "코스닥"]], () => HL_MKT, (v) => { HL_MKT = v; renderHighLow(); });
 seg($("#hl-smooth"), [[1, "일별"], [5, "5일 평균"], [20, "20일 평균"]], () => HL_SMOOTH, (v) => { HL_SMOOTH = +v; renderHighLow(); });
+seg($("#pg-mkt"), [["KOSPI", "코스피"], ["KOSDAQ", "코스닥"]], () => PG_MKT, (v) => { PG_MKT = v; renderProgram(); });
+seg($("#pg-list"), [["buy", "5일 순매수 상위"], ["sell", "5일 순매도 상위"], ["vbuy", "거래대금 대비 순매수"], ["vsell", "거래대금 대비 순매도"]], () => PG_LIST, (v) => { PG_LIST = v; renderProgram(); });
 seg($("#fr-list"), [["up", "1개월 증가 순"], ["dn", "1개월 감소 순"], ["y", "1년 증가 순"], ["lvl", "지분율 높은 순"]], () => FR_LIST, (v) => { FR_LIST = v; renderForeign(); });
 seg($("#sc-list"), [["short", "공매도 비중 높은 순"], ["surge", "공매도 급증 (5일 ÷ 60일)"], ["lend", "대차 비율 높은 순"], ["lendchg", "대차잔고 20일 증가 순"], ["rate", "신용 잔고율 높은 순"], ["chg", "신용 잔고 20일 증가 순"]], () => SC_LIST, (v) => { SC_LIST = v; renderShortCredit(); });
 seg($("#fb-mkt"), [["코스피", "코스피"], ["코스닥", "코스닥"]], () => FB_MKT, (v) => { FB_MKT = v; renderFlowBoard(); });
